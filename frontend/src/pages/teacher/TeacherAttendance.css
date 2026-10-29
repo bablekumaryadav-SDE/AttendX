@@ -1,0 +1,1088 @@
+/* =========================================================
+   ATTENDX - TEACHER ATTENDANCE
+   ========================================================= */
+
+.teacher-attendance-page {
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 34px;
+  background: #f6f7fb;
+  color: #101828;
+}
+
+.ta-container {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+
+.ta-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.ta-header-copy {
+  max-width: 780px;
+}
+
+.ta-eyebrow {
+  margin: 0 0 8px;
+  color: #635bff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.ta-header h1 {
+  margin: 0;
+  color: #101828;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.ta-header p {
+  max-width: 760px;
+  margin: 10px 0 0;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* =========================================================
+   LIVE CHIP
+   ========================================================= */
+
+.ta-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 9px 13px;
+  border: 1px solid #d0d5dd;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ta-live-chip > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #12b76a;
+  box-shadow: 0 0 0 4px #ecfdf3;
+}
+
+/* Supports optional class-based dot too */
+.ta-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #12b76a;
+  box-shadow: 0 0 0 4px #ecfdf3;
+}
+
+/* =========================================================
+   ALERTS
+   ========================================================= */
+
+.ta-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 13px 15px;
+  border: 1px solid;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.ta-alert.error {
+  border-color: #fecdca;
+  background: #fff5f4;
+  color: #b42318;
+}
+
+.ta-alert.success {
+  border-color: #abefc6;
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+/* =========================================================
+   MAIN GRID
+   ========================================================= */
+
+.ta-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.15fr)
+    minmax(320px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* =========================================================
+   CARD
+   ========================================================= */
+
+.ta-card {
+  overflow: hidden;
+  border: 1px solid #eaecf0;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow:
+    0 8px 28px rgba(16, 24, 40, 0.04);
+}
+
+/* =========================================================
+   CARD HEADER
+   ========================================================= */
+
+.ta-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px;
+  border-bottom: 1px solid #f2f4f7;
+}
+
+.ta-card-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ta-card-heading > div:first-child > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 9px;
+  background: #eef0ff;
+  color: #635bff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ta-card-heading h2 {
+  margin: 0;
+  color: #101828;
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 800;
+}
+
+.ta-card-heading small {
+  color: #98a2b3;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* =========================================================
+   CREATE SESSION FORM
+   ========================================================= */
+
+.ta-form {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 22px;
+}
+
+.ta-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ta-form label > span {
+  display: block;
+}
+
+.ta-form input,
+.ta-form select,
+.ta-form textarea {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  outline: none;
+  background: #ffffff;
+  color: #101828;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.ta-form input::placeholder,
+.ta-form textarea::placeholder {
+  color: #98a2b3;
+}
+
+.ta-form textarea {
+  min-height: 100px;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  resize: vertical;
+}
+
+.ta-form input:hover,
+.ta-form select:hover,
+.ta-form textarea:hover {
+  border-color: #98a2b3;
+}
+
+.ta-form input:focus,
+.ta-form select:focus,
+.ta-form textarea:focus {
+  border-color: #635bff;
+  box-shadow:
+    0 0 0 3px rgba(99, 91, 255, 0.11);
+}
+
+.ta-form input:disabled,
+.ta-form select:disabled,
+.ta-form textarea:disabled {
+  cursor: not-allowed;
+  background: #f2f4f7;
+  color: #98a2b3;
+}
+
+.ta-form .full {
+  grid-column: 1 / -1;
+}
+
+/* =========================================================
+   GEO LOCATION ROW
+   Matches TeacherAttendance.jsx
+   ========================================================= */
+
+.location-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.location-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.location-row strong {
+  color: #344054;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.location-row span {
+  min-width: 0;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* Backward-compatible class */
+.ta-location-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.ta-location-box span {
+  min-width: 0;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* =========================================================
+   FORM BUTTONS
+   ========================================================= */
+
+.ta-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.ta-form button,
+.qr-actions button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 16px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.ta-form button:hover,
+.qr-actions button:hover {
+  transform: translateY(-1px);
+}
+
+.ta-form button:disabled,
+.qr-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ta-form .primary,
+.qr-actions .primary {
+  background:
+    linear-gradient(
+      135deg,
+      #635bff,
+      #7355e8
+    );
+  color: #ffffff;
+  box-shadow:
+    0 10px 22px rgba(99, 91, 255, 0.2);
+}
+
+.ta-form .primary:hover:not(:disabled),
+.qr-actions .primary:hover:not(:disabled) {
+  box-shadow:
+    0 12px 26px rgba(99, 91, 255, 0.28);
+}
+
+.ta-form .secondary,
+.qr-actions .secondary,
+.location-row .secondary {
+  border: 1px solid #d0d5dd;
+  background: #ffffff;
+  color: #344054;
+}
+
+.ta-form .secondary:hover:not(:disabled),
+.qr-actions .secondary:hover:not(:disabled),
+.location-row .secondary:hover:not(:disabled) {
+  border-color: #98a2b3;
+  background: #f9fafb;
+}
+
+.qr-actions .danger {
+  border: 1px solid #fecdca;
+  background: #fff5f4;
+  color: #b42318;
+}
+
+.qr-actions .danger:hover:not(:disabled) {
+  background: #fee4e2;
+}
+
+/* =========================================================
+   SESSION LIST
+   ========================================================= */
+
+.session-list {
+  max-height: 430px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.session-list::-webkit-scrollbar-track {
+  background: #f9fafb;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d0d5dd;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background: #98a2b3;
+}
+
+.session-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  box-sizing: border-box;
+  padding: 17px 20px;
+  border: 0;
+  border-bottom: 1px solid #f2f4f7;
+  background: #ffffff;
+  color: #101828;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.session-item:last-child {
+  border-bottom: 0;
+}
+
+.session-item:hover {
+  background: #f9fafb;
+}
+
+.session-item.selected {
+  background: #f5f3ff;
+}
+
+.session-item > div {
+  min-width: 0;
+}
+
+.session-item strong,
+.session-item span,
+.session-item small {
+  display: block;
+}
+
+.session-item strong {
+  overflow: hidden;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item span {
+  color: #98a2b3;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.session-item small {
+  margin-top: 5px;
+  color: #667085;
+  font-size: 9px;
+}
+
+.session-item em {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.session-item em.active {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.session-item em.closed {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.session-item em.scheduled {
+  background: #eef4ff;
+  color: #3538cd;
+}
+
+.session-item em.pending {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.session-item em.unknown {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+/* =========================================================
+   EMPTY STATE
+   ========================================================= */
+
+.ta-empty {
+  padding: 35px 22px;
+  color: #98a2b3;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* =========================================================
+   LIVE ATTENDANCE CARD
+   ========================================================= */
+
+.live-card {
+  margin-top: 18px;
+}
+
+.live-count {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.live-count strong {
+  display: block;
+  color: #101828;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.live-count span {
+  display: block;
+  margin-top: 4px;
+  color: #98a2b3;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* =========================================================
+   LIVE SUMMARY
+   Matches updated TeacherAttendance.jsx
+   ========================================================= */
+
+.ta-live-summary {
+  display: grid;
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #f2f4f7;
+  background: #fcfcfd;
+}
+
+.ta-live-summary > div {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #eaecf0;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.ta-live-summary span {
+  display: block;
+  margin-bottom: 6px;
+  color: #98a2b3;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ta-live-summary strong {
+  display: block;
+  overflow: hidden;
+  color: #101828;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================================================
+   LIVE LAYOUT
+   ========================================================= */
+
+.live-layout {
+  display: grid;
+  grid-template-columns:
+    290px minmax(0, 1fr);
+  min-width: 0;
+}
+
+/* =========================================================
+   QR PANEL
+   ========================================================= */
+
+.qr-panel {
+  min-width: 0;
+  padding: 20px;
+  border-right: 1px solid #eef0f3;
+}
+
+.qr-placeholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 220px;
+  box-sizing: border-box;
+  padding: 20px;
+  border-radius: 15px;
+  background: #101828;
+  color: #ffffff;
+  text-align: center;
+}
+
+.qr-pattern {
+  display: grid;
+  place-items: center;
+  width: 125px;
+  height: 125px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background:
+    linear-gradient(
+      90deg,
+      #ffffff 10px,
+      transparent 10px
+    ) 0 0 / 25px 25px,
+    linear-gradient(
+      #ffffff 10px,
+      transparent 10px
+    ) 0 0 / 25px 25px,
+    #101828;
+  color: transparent;
+  overflow: hidden;
+}
+
+.qr-placeholder strong {
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.qr-placeholder span {
+  margin-top: 5px;
+  color: #98a2b3;
+  font-size: 10px;
+}
+
+.qr-token {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid #e4e7ec;
+  border-radius: 9px;
+  background: #f9fafb;
+  color: #344054;
+  font-family:
+    Consolas,
+    "Courier New",
+    monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.qr-meta {
+  margin-top: 7px;
+  color: #98a2b3;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.qr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.qr-actions button {
+  flex: 1 1 auto;
+}
+
+/* =========================================================
+   ATTENDANCE TABLE
+   ========================================================= */
+
+.attendance-table-wrap {
+  min-width: 0;
+  overflow: auto;
+}
+
+.attendance-table-wrap::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.attendance-table-wrap::-webkit-scrollbar-track {
+  background: #f9fafb;
+}
+
+.attendance-table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #d0d5dd;
+}
+
+.attendance-table-wrap table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.attendance-table-wrap th,
+.attendance-table-wrap td {
+  padding: 13px;
+  border-bottom: 1px solid #f2f4f7;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.attendance-table-wrap tbody tr {
+  transition:
+    background 0.16s ease;
+}
+
+.attendance-table-wrap tbody tr:hover {
+  background: #fcfcfd;
+}
+
+.attendance-table-wrap th {
+  background: #fcfcfd;
+  color: #98a2b3;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.attendance-table-wrap td {
+  color: #475467;
+}
+
+.attendance-table-wrap td strong,
+.attendance-table-wrap td small {
+  display: block;
+}
+
+.attendance-table-wrap td strong {
+  color: #101828;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.attendance-table-wrap td small {
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.attendance-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* =========================================================
+   STATUS BADGES
+   ========================================================= */
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status.present {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.status.late {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.status.absent {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.status.unknown {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+/* =========================================================
+   TABLE EMPTY
+   ========================================================= */
+
+.table-empty {
+  padding: 35px !important;
+  color: #98a2b3;
+  text-align: center !important;
+  white-space: normal !important;
+}
+
+/* =========================================================
+   FOCUS ACCESSIBILITY
+   ========================================================= */
+
+.ta-form button:focus-visible,
+.qr-actions button:focus-visible,
+.session-item:focus-visible {
+  outline: 3px solid
+    rgba(99, 91, 255, 0.22);
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   1100px
+   ========================================================= */
+
+@media (max-width: 1100px) {
+  .teacher-attendance-page {
+    padding: 24px;
+  }
+
+  .ta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ta-live-summary {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* =========================================================
+   850px
+   ========================================================= */
+
+@media (max-width: 850px) {
+  .ta-header {
+    flex-direction: column;
+  }
+
+  .ta-live-chip {
+    align-self: flex-start;
+  }
+
+  .live-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .qr-panel {
+    border-right: 0;
+    border-bottom: 1px solid #eef0f3;
+  }
+}
+
+/* =========================================================
+   650px
+   ========================================================= */
+
+@media (max-width: 650px) {
+  .teacher-attendance-page {
+    padding: 16px;
+  }
+
+  .ta-header {
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .ta-header h1 {
+    font-size: 27px;
+  }
+
+  .ta-header p {
+    font-size: 13px;
+  }
+
+  .ta-card {
+    border-radius: 14px;
+  }
+
+  .ta-card-heading {
+    padding: 16px;
+  }
+
+  .ta-card-heading h2 {
+    font-size: 15px;
+  }
+
+  .ta-form {
+    grid-template-columns: 1fr;
+    gap: 15px;
+    padding: 17px;
+  }
+
+  .ta-form .full {
+    grid-column: auto;
+  }
+
+  .location-row,
+  .ta-location-box {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .location-row .secondary,
+  .ta-location-box button {
+    width: 100%;
+  }
+
+  .ta-form-actions {
+    justify-content: stretch;
+  }
+
+  .ta-form-actions button {
+    width: 100%;
+  }
+
+  .ta-live-summary {
+    grid-template-columns: 1fr 1fr;
+    padding: 14px;
+  }
+
+  .ta-live-summary > div {
+    padding: 11px;
+  }
+
+  .ta-live-summary strong {
+    font-size: 16px;
+  }
+
+  .qr-panel {
+    padding: 16px;
+  }
+
+  .qr-placeholder {
+    min-height: 200px;
+  }
+
+  .session-item {
+    padding: 15px 16px;
+  }
+}
+
+/* =========================================================
+   430px
+   ========================================================= */
+
+@media (max-width: 430px) {
+  .teacher-attendance-page {
+    padding: 12px;
+  }
+
+  .ta-header h1 {
+    font-size: 24px;
+  }
+
+  .ta-eyebrow {
+    font-size: 9px;
+  }
+
+  .ta-live-chip {
+    padding: 8px 11px;
+    font-size: 10px;
+  }
+
+  .ta-card-heading {
+    align-items: flex-start;
+  }
+
+  .ta-card-heading > div:first-child {
+    gap: 9px;
+  }
+
+  .ta-card-heading > div:first-child > span {
+    width: 27px;
+    height: 27px;
+    flex-basis: 27px;
+    border-radius: 8px;
+    font-size: 10px;
+  }
+
+  .ta-live-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .live-count strong {
+    font-size: 19px;
+  }
+
+  .qr-actions {
+    flex-direction: column;
+  }
+
+  .qr-actions button {
+    width: 100%;
+  }
+
+  .attendance-table-wrap table {
+    min-width: 580px;
+  }
+}
+
+/* =========================================================
+   REDUCED MOTION
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .ta-form input,
+  .ta-form select,
+  .ta-form textarea,
+  .ta-form button,
+  .qr-actions button,
+  .session-item,
+  .attendance-table-wrap tbody tr {
+    transition: none;
+  }
+}

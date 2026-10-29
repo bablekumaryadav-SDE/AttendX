@@ -1,0 +1,58 @@
+import axios from "axios";
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
+export const TOKEN_KEY = "attendx_access_token";
+
+const api = axios.create({
+  baseURL: API_BASE_URL.replace(/\/+$/, ""),
+  timeout: 15000,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+// Har request ke saath token bhejein, agar available ho.
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem(TOKEN_KEY);
+
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${token}`;
+    } else if (config.headers?.Authorization) {
+      delete config.headers.Authorization;
+    }
+
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// API errors ko readable message ke saath handle karein.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (!error.response) {
+      error.message =
+        "Backend se connection nahi ho raha. Check karein ki FastAPI port 8000 par chal rahi hai.";
+    } else if (error.response.status === 401) {
+      error.message =
+        error.response.data?.detail ||
+        "Login session invalid hai. Dobara login karein.";
+    } else if (error.response.status === 403) {
+      error.message =
+        error.response.data?.detail ||
+        "Aapko is action ki permission nahi hai.";
+    } else if (error.response.status >= 500) {
+      error.message =
+        error.response.data?.detail ||
+        "Backend server mein error aaya hai.";
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export default api;

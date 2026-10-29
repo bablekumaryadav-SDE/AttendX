@@ -1,0 +1,274 @@
+.admin-dashboard-page {
+  padding: 28px;
+  max-width: 1440px;
+  margin: 0 auto;
+  color: #172033;
+}
+
+.ad-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
+
+.ad-eyebrow,
+.ad-kicker {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  font-weight: 800;
+  color: #667085;
+}
+
+.ad-header h1 {
+  margin: 7px 0 8px;
+  font-size: 34px;
+  letter-spacing: -0.03em;
+}
+
+.ad-header p {
+  margin: 0;
+  color: #667085;
+  max-width: 760px;
+}
+
+.ad-refresh {
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  padding: 11px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ad-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ad-alert {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fff4ed;
+  color: #9a3412;
+  border: 1px solid #fed7aa;
+}
+
+.ad-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.ad-stat,
+.ad-card {
+  background: #fff;
+  border: 1px solid #eaecf0;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.05);
+}
+
+.ad-stat {
+  padding: 20px;
+}
+
+.ad-stat span,
+.ad-stat small {
+  display: block;
+  color: #667085;
+}
+
+.ad-stat strong {
+  display: block;
+  font-size: 32px;
+  margin: 8px 0 5px;
+  letter-spacing: -0.03em;
+}
+
+.ad-stat small {
+  font-size: 12px;
+}
+
+.ad-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.ad-card {
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.ad-grid .ad-card {
+  margin-bottom: 0;
+}
+
+.ad-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 18px;
+}
+
+.ad-card-head h2 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.ad-card-head a {
+  font-size: 13px;
+  font-weight: 700;
+  color: #344054;
+  text-decoration: none;
+}
+
+.ad-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.ad-action-grid a {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid #eaecf0;
+  border-radius: 12px;
+  color: #172033;
+  text-decoration: none;
+  font-weight: 700;
+  background: #fcfcfd;
+  transition: 0.2s ease;
+}
+
+.ad-action-grid a:hover {
+  border-color: #b7c0ce;
+  transform: translateY(-1px);
+}
+
+.ad-risk-list {
+  display: grid;
+  gap: 4px;
+}
+
+.ad-risk-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #f2f4f7;
+}
+
+.ad-risk-row:last-child {
+  border-bottom: 0;
+}
+
+.ad-risk-row strong,
+.ad-risk-row span {
+  display: block;
+}
+
+.ad-risk-row span {
+  font-size: 11px;
+  color: #98a2b3;
+  margin-top: 3px;
+}
+
+.ad-risk-row b {
+  font-size: 14px;
+}
+
+.ad-empty,
+.ad-empty-cell {
+  text-align: center;
+  color: #98a2b3;
+  padding: 30px 10px;
+}
+
+.ad-table-wrap {
+  overflow: auto;
+}
+
+.ad-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.ad-table th,
+.ad-table td {
+  text-align: left;
+  padding: 12px;
+  border-bottom: 1px solid #f2f4f7;
+  font-size: 13px;
+}
+
+.ad-table th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #98a2b3;
+}
+
+.ad-table td strong {
+  display: block;
+}
+
+.ad-status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ad-status.active {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.ad-status.closed {
+  background: #f2f4f7;
+  color: #475467;
+}
+
+@media (max-width: 1000px) {
+  .ad-stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .ad-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-dashboard-page {
+    padding: 18px;
+  }
+
+  .ad-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ad-header h1 {
+    font-size: 28px;
+  }
+
+  .ad-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ad-action-grid {
+    grid-template-columns: 1fr;
+  }
+}

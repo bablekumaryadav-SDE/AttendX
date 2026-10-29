@@ -1,0 +1,539 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+import {
+  createStudent,
+  deleteStudent,
+  getStudents,
+  updateStudent,
+} from "../../services/students";
+
+function Students() {
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [search, setSearch] = useState("");
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingStudent, setEditingStudent] = useState(null);
+
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    roll_number: "",
+    department: "",
+  });
+
+  // =========================================================
+  // LOAD STUDENTS
+  // =========================================================
+
+  const loadStudents = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const data = await getStudents();
+
+      setStudents(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load students:", err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to load students. Please check the backend."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadStudents();
+  }, []);
+
+  // =========================================================
+  // SEARCH
+  // =========================================================
+
+  const filteredStudents = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return students;
+    }
+
+    return students.filter((student) => {
+      return (
+        student.name?.toLowerCase().includes(query) ||
+        student.email?.toLowerCase().includes(query) ||
+        student.roll_number?.toLowerCase().includes(query) ||
+        student.department?.toLowerCase().includes(query)
+      );
+    });
+  }, [students, search]);
+
+  // =========================================================
+  // FORM
+  // =========================================================
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+
+    setForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  };
+
+  const openAddForm = () => {
+    setEditingStudent(null);
+
+    setForm({
+      name: "",
+      email: "",
+      roll_number: "",
+      department: "",
+    });
+
+    setError("");
+    setSuccess("");
+    setShowForm(true);
+  };
+
+  const openEditForm = (student) => {
+    setEditingStudent(student);
+
+    setForm({
+      name: student.name || "",
+      email: student.email || "",
+      roll_number: student.roll_number || "",
+      department: student.department || "",
+    });
+
+    setError("");
+    setSuccess("");
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    if (saving) {
+      return;
+    }
+
+    setShowForm(false);
+    setEditingStudent(null);
+  };
+
+  // =========================================================
+  // SAVE
+  // =========================================================
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+
+    setError("");
+    setSuccess("");
+
+    if (!form.name.trim()) {
+      setError("Student name is required.");
+      return;
+    }
+
+    if (!form.email.trim()) {
+      setError("Student email is required.");
+      return;
+    }
+
+    if (!form.roll_number.trim()) {
+      setError("Roll number is required.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      if (editingStudent) {
+        await updateStudent(editingStudent.id, {
+          name: form.name.trim(),
+          email: form.email.trim(),
+          roll_number: form.roll_number.trim(),
+          department: form.department.trim(),
+        });
+
+        setSuccess("Student updated successfully.");
+      } else {
+        await createStudent({
+          name: form.name.trim(),
+          email: form.email.trim(),
+          roll_number: form.roll_number.trim(),
+          department: form.department.trim(),
+        });
+
+        setSuccess("Student created successfully.");
+      }
+
+      setShowForm(false);
+      setEditingStudent(null);
+
+      setForm({
+        name: "",
+        email: "",
+        roll_number: "",
+        department: "",
+      });
+
+      await loadStudents();
+    } catch (err) {
+      console.error("Failed to save student:", err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to save student. Please try again."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // =========================================================
+  // DELETE
+  // =========================================================
+
+  const handleDelete = async (student) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${student.name}?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+
+    try {
+      await deleteStudent(student.id);
+
+      setSuccess("Student deleted successfully.");
+
+      await loadStudents();
+    } catch (err) {
+      console.error("Failed to delete student:", err);
+
+      setError(
+        err.response?.data?.detail ||
+          "Unable to delete student. Please try again."
+      );
+    }
+  };
+
+  // =========================================================
+  // RENDER
+  // =========================================================
+
+  return (
+    <div className="dashboard-page">
+      {/* PAGE HEADER */}
+
+      <div className="dashboard-welcome">
+        <div>
+          <span className="page-eyebrow">ADMINISTRATION</span>
+
+          <h2>Students</h2>
+
+          <p>
+            Manage student records, profiles and enrollment
+            information.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="primary-button"
+          onClick={openAddForm}
+        >
+          + Add Student
+        </button>
+      </div>
+
+      {/* MESSAGES */}
+
+      {error && (
+        <div className="page-message error-message">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="page-message success-message">
+          {success}
+        </div>
+      )}
+
+      {/* STUDENTS PANEL */}
+
+      <section className="dashboard-panel students-panel">
+        <div className="panel-header">
+          <div>
+            <span className="panel-eyebrow">
+              STUDENT DIRECTORY
+            </span>
+
+            <h3>
+              All Students
+              <span className="student-count">
+                {students.length}
+              </span>
+            </h3>
+          </div>
+
+          <div className="students-toolbar">
+            <input
+              type="search"
+              className="student-search"
+              placeholder="Search students..."
+              value={search}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
+            />
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={loadStudents}
+              disabled={loading}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {/* TABLE */}
+
+        {loading ? (
+          <div className="students-empty">
+            <strong>Loading students...</strong>
+            <span>Please wait.</span>
+          </div>
+        ) : filteredStudents.length === 0 ? (
+          <div className="students-empty">
+            <strong>
+              {search
+                ? "No students found"
+                : "No students available"}
+            </strong>
+
+            <span>
+              {search
+                ? "Try a different search."
+                : "Add your first student to get started."}
+            </span>
+          </div>
+        ) : (
+          <div className="students-table-wrapper">
+            <table className="students-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Roll Number</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredStudents.map((student) => (
+                  <tr key={student.id}>
+                    <td>
+                      <div className="student-name-cell">
+                        <div className="student-avatar">
+                          {student.name
+                            ?.charAt(0)
+                            ?.toUpperCase() || "S"}
+                        </div>
+
+                        <strong>{student.name}</strong>
+                      </div>
+                    </td>
+
+                    <td>{student.email}</td>
+
+                    <td>{student.roll_number}</td>
+
+                    <td>
+                      {student.department || "—"}
+                    </td>
+
+                    <td>
+                      <span
+                        className={`student-status ${
+                          student.is_active === false
+                            ? "inactive"
+                            : "active"
+                        }`}
+                      >
+                        {student.is_active === false
+                          ? "Inactive"
+                          : "Active"}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="student-actions">
+                        <button
+                          type="button"
+                          className="table-action edit-action"
+                          onClick={() =>
+                            openEditForm(student)
+                          }
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          className="table-action delete-action"
+                          onClick={() =>
+                            handleDelete(student)
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ADD / EDIT MODAL */}
+
+      {showForm && (
+        <div
+          className="modal-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeForm();
+            }
+          }}
+        >
+          <div className="student-modal">
+            <div className="modal-header">
+              <div>
+                <span className="panel-eyebrow">
+                  STUDENT MANAGEMENT
+                </span>
+
+                <h3>
+                  {editingStudent
+                    ? "Edit Student"
+                    : "Add Student"}
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeForm}
+                disabled={saving}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              <div className="student-form-grid">
+                <label>
+                  <span>Full Name *</span>
+
+                  <input
+                    type="text"
+                    name="name"
+                    value={form.name}
+                    onChange={handleChange}
+                    placeholder="Enter student name"
+                    disabled={saving}
+                  />
+                </label>
+
+                <label>
+                  <span>Email *</span>
+
+                  <input
+                    type="email"
+                    name="email"
+                    value={form.email}
+                    onChange={handleChange}
+                    placeholder="student@example.com"
+                    disabled={saving}
+                  />
+                </label>
+
+                <label>
+                  <span>Roll Number *</span>
+
+                  <input
+                    type="text"
+                    name="roll_number"
+                    value={form.roll_number}
+                    onChange={handleChange}
+                    placeholder="Enter roll number"
+                    disabled={saving}
+                  />
+                </label>
+
+                <label>
+                  <span>Department</span>
+
+                  <input
+                    type="text"
+                    name="department"
+                    value={form.department}
+                    onChange={handleChange}
+                    placeholder="e.g. Computer Science"
+                    disabled={saving}
+                  />
+                </label>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closeForm}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "Saving..."
+                    : editingStudent
+                    ? "Update Student"
+                    : "Create Student"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default Students;
