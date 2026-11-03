@@ -7,8 +7,9 @@ import React, {
 import {
   getAttendanceSessions,
   getLiveAttendance,
-} from "../../services/attendance";
+} from "../../../services/attendance";
 import "./AttendanceMonitor.css";
+import { getApiErrorMessage } from "../../../utils/errors.js";
 
 export default function AttendanceMonitor() {
   const [sessions, setSessions] = useState([]);
@@ -16,11 +17,12 @@ export default function AttendanceMonitor() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [sessionsError, setSessionsError] = useState("");
+  const [liveError, setLiveError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setSessionsError("");
 
     try {
       const data = await getAttendanceSessions();
@@ -28,19 +30,19 @@ export default function AttendanceMonitor() {
       const list = Array.isArray(data) ? data : [];
 
       setSessions(list);
-
-      if (!selected && list[0]) {
-        setSelected(list[0]);
-      }
+      setSelected((current) =>
+        list.find((session) => session.id === current?.id) ||
+        list[0] ||
+        null
+      );
     } catch (e) {
-      setError(
-        e?.response?.data?.detail ||
-          "Unable to load attendance sessions."
+      setSessionsError(
+        getApiErrorMessage(e, "Unable to load attendance sessions.")
       );
     } finally {
       setLoading(false);
     }
-  }, [selected]);
+  }, []);
 
   const loadLive = useCallback(async (session) => {
     if (!session) return;
@@ -53,10 +55,11 @@ export default function AttendanceMonitor() {
       );
 
       setRows(Array.isArray(data) ? data : []);
+      setLiveError("");
     } catch (e) {
-      setError(
-        e?.response?.data?.detail ||
-          "Unable to load live attendance."
+      setRows([]);
+      setLiveError(
+        getApiErrorMessage(e, "Unable to load live attendance.")
       );
     } finally {
       setLiveLoading(false);
@@ -70,6 +73,10 @@ export default function AttendanceMonitor() {
   useEffect(() => {
     if (selected) {
       loadLive(selected);
+    } else {
+      setRows([]);
+      setLiveError("");
+      setLiveLoading(false);
     }
   }, [selected, loadLive]);
 
@@ -101,6 +108,12 @@ export default function AttendanceMonitor() {
       absent: rows.filter(
         (r) => r.status === "absent"
       ).length,
+      pending: rows.filter(
+        (r) => r.status === "pending" || r.attendance_id == null
+      ).length,
+      recorded: rows.filter(
+        (r) => r.attendance_id != null
+      ).length,
     }),
     [rows]
   );
@@ -119,14 +132,19 @@ export default function AttendanceMonitor() {
           </p>
         </div>
 
-        <button onClick={load}>
-          Refresh
+        <button type="button" onClick={load} disabled={loading}>
+          {loading ? "Refreshing…" : "Refresh"}
         </button>
       </header>
 
-      {error && (
-        <div className="monitor-alert">
-          {error}
+      {sessionsError && (
+        <div className="monitor-alert" role="alert">
+          {sessionsError}
+        </div>
+      )}
+      {liveError && (
+        <div className="monitor-alert" role="alert">
+          {liveError}
         </div>
       )}
 
@@ -150,7 +168,11 @@ export default function AttendanceMonitor() {
                     : ""
                 }
                 onClick={() =>
-                  setSelected(session)
+                  {
+                    setRows([]);
+                    setLiveError("");
+                    setSelected(session);
+                  }
                 }
               >
                 <strong>
@@ -235,7 +257,23 @@ export default function AttendanceMonitor() {
                 </div>
               </div>
 
+              {counts.pending > 0 && (
+                <div className="monitor-loading" role="status">
+                  {counts.pending} students have not been marked yet.
+                </div>
+              )}
+
               <div className="monitor-table-wrap">
+                {counts.recorded === 0 && !liveLoading && !liveError && (
+                  <div className="monitor-empty">
+                    {rows.length === 0
+                      ? "No active students are enrolled in this class."
+                      : "No attendance records for this session yet."}
+                    {counts.pending > 0 && (
+                      <div>{counts.pending} students are still pending.</div>
+                    )}
+                  </div>
+                )}
                 <table>
                   <thead>
                     <tr>
@@ -272,7 +310,9 @@ export default function AttendanceMonitor() {
                           <span
                             className={`monitor-status ${row.status}`}
                           >
-                            {row.status}
+                            {row.status === "pending"
+                              ? "Pending"
+                              : row.status}
                           </span>
                         </td>
 

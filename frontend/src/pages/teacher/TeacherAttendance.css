@@ -670,25 +670,20 @@
   text-align: center;
 }
 
-.qr-pattern {
+.qr-code-surface {
   display: grid;
   place-items: center;
-  width: 125px;
-  height: 125px;
+  width: 176px;
+  height: 176px;
   box-sizing: border-box;
+  padding: 8px;
   border-radius: 10px;
-  background:
-    linear-gradient(
-      90deg,
-      #ffffff 10px,
-      transparent 10px
-    ) 0 0 / 25px 25px,
-    linear-gradient(
-      #ffffff 10px,
-      transparent 10px
-    ) 0 0 / 25px 25px,
-    #101828;
-  color: transparent;
+  background: #ffffff;
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
   overflow: hidden;
 }
 

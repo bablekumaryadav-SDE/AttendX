@@ -1,11 +1,13 @@
 
 import hashlib
+import json
 from typing import Annotated
 
 from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -20,13 +22,18 @@ from app.dependencies import (
     get_current_admin,
     get_current_user,
 )
-from app.models import FaceEmbedding, Student, User
+from app.models import Class, FaceEmbedding, Student, StudentClassAssignment, User
 from app.schemas.student import (
     StudentCreate,
     StudentUpdate,
     StudentResponse,
 )
+from app.schemas.student_class_assignment import (
+    StudentClassAssignmentResponse,
+    StudentClassAssignmentUpdate,
+)
 from app.security import get_password_hash
+from app.services.face_engine import embedding_from_image
 from app.services.student_module import next_student_code
 
 
@@ -43,7 +50,12 @@ ALLOWED_FACE_TYPES = {
 
 def _student_query(db: Session):
     return db.query(Student).options(
-        selectinload(Student.face_registration)
+        selectinload(Student.face_registration).load_only(
+            FaceEmbedding.status,
+            FaceEmbedding.embedding_json,
+            FaceEmbedding.registered_at,
+            FaceEmbedding.student_id,
+        )
     )
 
 
@@ -132,7 +144,7 @@ def get_students(
     search: str | None = Query(default=None, max_length=100),
     active_only: bool = False,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     query = _student_query(db)
 
@@ -164,7 +176,7 @@ def get_students(
 def get_student(
     student_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     return _student_or_404(db, student_id)
 
@@ -476,6 +488,106 @@ def activate_student(
     return student
 
 
+@router.get(
+    "/{student_id}/class-assignment",
+    response_model=StudentClassAssignmentResponse | None,
+)
+def get_student_class_assignment(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    _student_or_404(db, student_id)
+    return (
+        db.query(StudentClassAssignment)
+        .filter(
+            StudentClassAssignment.student_id == student_id,
+            StudentClassAssignment.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+@router.put(
+    "/{student_id}/class-assignment",
+    response_model=StudentClassAssignmentResponse,
+)
+def assign_student_class(
+    student_id: int,
+    data: StudentClassAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    student = _student_or_404(db, student_id)
+    if not student.is_active:
+        raise HTTPException(status_code=400, detail="Activate the student before assigning a class.")
+
+    class_ = db.query(Class).filter(Class.id == data.class_id).first()
+    if class_ is None or not class_.is_active:
+        raise HTTPException(status_code=422, detail="Select an active class.")
+
+    current = (
+        db.query(StudentClassAssignment)
+        .filter(
+            StudentClassAssignment.student_id == student_id,
+            StudentClassAssignment.is_active.is_(True),
+        )
+        .first()
+    )
+    if current and current.class_id == data.class_id:
+        current.academic_year = data.academic_year
+        current.semester = data.semester
+        assignment = current
+    else:
+        if current:
+            current.is_active = False
+            db.flush()
+        assignment = StudentClassAssignment(
+            student_id=student_id,
+            class_id=data.class_id,
+            academic_year=data.academic_year,
+            semester=data.semester,
+            is_active=True,
+        )
+        db.add(assignment)
+
+    try:
+        db.commit()
+        db.refresh(assignment)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Unable to save the student's class assignment.") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Unable to save the student's class assignment.") from exc
+    return assignment
+
+
+@router.delete("/{student_id}/class-assignment")
+def unassign_student_class(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin),
+):
+    _student_or_404(db, student_id)
+    assignment = (
+        db.query(StudentClassAssignment)
+        .filter(
+            StudentClassAssignment.student_id == student_id,
+            StudentClassAssignment.is_active.is_(True),
+        )
+        .first()
+    )
+    if assignment:
+        assignment.is_active = False
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Unable to remove the student's class assignment.") from exc
+    return {"message": "Student class assignment deactivated."}
+
+
 # =========================================================
 # REGISTER STUDENT FACE
 # =========================================================
@@ -487,10 +599,17 @@ def activate_student(
 async def register_student_face(
     student_id: int,
     file: Annotated[UploadFile, File(...)],
+    consent: Annotated[bool, Form(...)],
     db: Session = Depends(get_db),
     current_user=Depends(get_current_admin),
 ):
     student = _student_or_404(db, student_id)
+
+    if not consent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Student or parent/guardian consent is required for face registration.",
+        )
 
     if not student.is_active:
         raise HTTPException(
@@ -519,6 +638,15 @@ async def register_student_face(
             detail="This face image is already registered to another student.",
         )
 
+    try:
+        embedding = embedding_from_image(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RuntimeError, AttributeError) as exc:
+        raise HTTPException(status_code=503, detail="Face recognition models are unavailable.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Image could not be processed by the face recognition model.") from exc
+
     registration = student.face_registration
 
     if registration is None:
@@ -528,8 +656,8 @@ async def register_student_face(
     registration.image_data = data
     registration.mime_type = file.content_type or "image/jpeg"
     registration.image_sha256 = image_hash
+    registration.embedding_json = json.dumps(embedding)
     registration.status = "registered"
-    registration.embedding_json = None
 
     try:
         db.commit()
@@ -539,6 +667,12 @@ async def register_student_face(
 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail="Unable to save face registration.",
+        ) from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to save face registration.",
         ) from exc
 

@@ -1,4 +1,5 @@
 import api from "./api";
+import { getApiErrorMessage } from "../utils/errors";
 
 // ============================================================
 // LOGIN
@@ -25,27 +26,8 @@ export async function loginUser(email, password) {
 
     return response.data;
   } catch (error) {
-    console.error(
-      "AttendX login API error:",
-      error.response?.data || error.message
-    );
-
     if (error.response) {
-      const detail = error.response.data?.detail;
-
-      if (typeof detail === "string") {
-        throw new Error(detail);
-      }
-
-      if (Array.isArray(detail)) {
-        throw new Error(
-          detail.map((item) => item.msg || "Invalid input").join(", ")
-        );
-      }
-
-      throw new Error(
-        `Login request fail hui. HTTP status: ${error.response.status}`
-      );
+      throw new Error(getApiErrorMessage(error, `Login request fail hui. HTTP status: ${error.response.status}`));
     }
 
     if (error.request) {
@@ -76,21 +58,8 @@ export async function getCurrentUser(token) {
 
     return response.data;
   } catch (error) {
-    console.error(
-      "AttendX current-user API error:",
-      error.response?.data || error.message
-    );
-
     if (error.response) {
-      const detail = error.response.data?.detail;
-
-      if (typeof detail === "string") {
-        throw new Error(detail);
-      }
-
-      throw new Error(
-        `User details load nahi hue. HTTP status: ${error.response.status}`
-      );
+      throw new Error(getApiErrorMessage(error, `User details load nahi hue. HTTP status: ${error.response.status}`));
     }
 
     if (error.request) {

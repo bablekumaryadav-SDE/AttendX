@@ -1,44 +1,45 @@
 
 import React from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import "./LandingPage.css";
 
 const features = [
   {
     icon: "◉",
-    title: "AI Face Verification",
-    text: "Verify student identity using face matching and add an optional liveness verification workflow.",
-    tag: "AI Powered",
+    title: "SFace Verification",
+    text: "Register a student face reference, then verify it against an active attendance session with the SFace-based workflow.",
+    tag: "Face Matching",
   },
   {
     icon: "▦",
     title: "Dynamic QR Attendance",
-    text: "Generate time-limited QR codes for classroom attendance sessions and prevent duplicate submissions.",
+    text: "Teacher sessions can publish time-limited QR codes. The backend validates session eligibility and prevents duplicate records.",
     tag: "Fast & Easy",
   },
   {
     icon: "⌖",
     title: "GPS Geo-fencing",
-    text: "Validate the student's reported location against the configured classroom radius.",
+    text: "When a teacher configures location for a session, attendance requests are checked against its radius.",
     tag: "Location Aware",
   },
   {
     icon: "▤",
-    title: "Smart Reports",
-    text: "View attendance history, subject-wise percentages, date filters and exportable reports.",
+    title: "Reports and Analytics",
+    text: "Review attendance records, filter report data and export the current report as a CSV file.",
     tag: "Analytics",
   },
   {
     icon: "✉",
-    title: "Parent Notifications",
-    text: "Configure email and SMS alerts for absences and low-attendance situations.",
-    tag: "Notifications",
+    title: "Attendance History",
+    text: "Students can review attendance records associated with their account from the protected workspace.",
+    tag: "Records",
   },
   {
     icon: "✦",
-    title: "Gemini AI Insights",
-    text: "Ask natural-language questions about authorized attendance data and generate useful summaries.",
-    tag: "AI Assistant",
+    title: "Role-Based Dashboards",
+    text: "Admin, teacher and student accounts reach dedicated, protected workspaces through existing authentication.",
+    tag: "Three Workspaces",
   },
 ];
 
@@ -47,7 +48,7 @@ const roles = [
     icon: "◈",
     title: "Administrator",
     description:
-      "Manage students, teachers, classes, subjects, attendance records and system settings.",
+      "Manage student and teacher records, classes, subjects and administrative attendance views.",
     link: "/login",
     label: "Admin Login",
   },
@@ -80,6 +81,14 @@ function SectionHeading({ eyebrow, title, text }) {
 }
 
 export default function LandingPage() {
+  const { user } = useAuth();
+  const role = String(user?.role || "").trim().toLowerCase();
+  const workspacePath = {
+    admin: "/admin",
+    teacher: "/teacher",
+    student: "/student",
+  }[role];
+
   return (
     <main className="ax-landing">
       <header className="ax-navbar">
@@ -99,11 +108,11 @@ export default function LandingPage() {
         </nav>
 
         <div className="ax-nav-actions">
-          <Link to="/login" className="ax-login-link">
+          {!workspacePath && <Link to="/login" className="ax-login-link">
             Sign in
-          </Link>
-          <Link to="/login" className="ax-button ax-button-small">
-            Get started <span>↗</span>
+          </Link>}
+          <Link to={workspacePath || "/login"} className="ax-button ax-button-small">
+            {workspacePath ? "My workspace" : "Get started"} <span>↗</span>
           </Link>
         </div>
       </header>
@@ -119,17 +128,16 @@ export default function LandingPage() {
             <h1>
               Attendance,
               <br />
-              <span>reimagined with AI.</span>
+              <span>made clear and accountable.</span>
             </h1>
 
             <p className="ax-hero-description">
-              Meet AttendX — an intelligent attendance management platform
-              that brings identity verification, classroom attendance,
-              analytics and notifications into one connected workspace.
+              Meet AttendX, an attendance management platform for classroom
+              sessions, face and QR verification, and attendance records.
             </p>
 
             <div className="ax-hero-actions">
-              <Link to="/login" className="ax-button">
+              <Link to={workspacePath || "/login"} className="ax-button">
                 Access your dashboard <span>→</span>
               </Link>
               <a href="#features" className="ax-button ax-button-outline">
@@ -185,7 +193,7 @@ export default function LandingPage() {
                 <div className="ax-metric">
                   <span className="ax-metric-icon green">✓</span>
                   <span>Verification</span>
-                  <strong>Multi-layer</strong>
+                  <strong>Session verified</strong>
                   <small>QR, face and GPS*</small>
                 </div>
               </div>
@@ -194,8 +202,8 @@ export default function LandingPage() {
                 <div>
                   <span className="ax-mini-chart-icon">↗</span>
                   <div>
-                    <strong>Smart insights</strong>
-                    <small>Reports and attendance trends</small>
+                    <strong>Attendance reports</strong>
+                    <small>Records and available summaries</small>
                   </div>
                 </div>
                 <span className="ax-preview-arrow">→</span>
@@ -208,8 +216,8 @@ export default function LandingPage() {
             <div className="ax-floating-card ax-float-top">
               <span className="ax-float-icon">✦</span>
               <div>
-                <strong>AI-assisted</strong>
-                <small>Attendance insights</small>
+                <strong>Session-based</strong>
+                <small>Attendance records</small>
               </div>
             </div>
 
@@ -299,8 +307,7 @@ export default function LandingPage() {
               <div>
                 <h3>Review reports and insights</h3>
                 <p>
-                  Authorized users review attendance records, percentages
-                  and configured notifications.
+                  Authorized users review attendance records and available report summaries.
                 </p>
               </div>
               <span className="ax-step-icon">↗</span>
@@ -364,8 +371,8 @@ export default function LandingPage() {
             <div>
               <span>✓</span>
               <div>
-                <strong>Configurable integrations</strong>
-                <p>Connect supported AI and notification services.</p>
+                <strong>Authenticated access</strong>
+                <p>Protected workspaces use the existing bearer-token login flow.</p>
               </div>
             </div>
           </div>
@@ -406,7 +413,7 @@ export default function LandingPage() {
 
         <div className="ax-footer-bottom">
           <span>© {new Date().getFullYear()} AttendX</span>
-          <span>AI-assisted attendance management</span>
+          <span>Intelligent attendance management</span>
         </div>
       </footer>
     </main>

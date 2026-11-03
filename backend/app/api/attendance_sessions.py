@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -19,7 +19,7 @@ from app.services.attendance_core import (
     log_audit,
     new_qr_secret,
     utcnow,
-    verify_qr_token,
+    verify_current_qr_token,
 )
 
 
@@ -83,6 +83,13 @@ def _session(db: Session, session_id: int):
         )
 
     return row
+
+
+def _session_response(row):
+    """Remove the server-side QR signing secret from API payloads."""
+    payload = dict(row)
+    payload.pop("qr_secret", None)
+    return payload
 
 
 def _require_teacher_session_access(
@@ -158,6 +165,7 @@ def _get_student_for_user(
 
 def _queue_absence_notification(
     db: Session,
+    session_id: int,
     student_id: int,
     student_name: str,
     session_title: str,
@@ -170,10 +178,31 @@ def _queue_absence_notification(
     IMPORTANT:
     This does NOT pretend that SMS/email has been sent.
 
-    It only creates a real notification_logs record with
-    status='queued'. Actual SMTP/Twilio/WhatsApp delivery
-    can be connected later.
+    It creates one in-app event marked queued. No SMS or email
+    delivery is claimed by this application.
     """
+
+    schema = inspect(db.get_bind())
+    if not schema.has_table("notification_events") or not schema.has_table("student_guardians"):
+        return False
+
+    recipient_user = db.execute(
+        text(
+            """
+            SELECT u.id
+            FROM users u
+            JOIN students s ON LOWER(s.email) = LOWER(u.email)
+            WHERE s.id = :student_id
+              AND s.is_active = TRUE
+              AND u.is_active = TRUE
+              AND LOWER(u.role) = 'student'
+            LIMIT 1
+            """
+        ),
+        {"student_id": student_id},
+    ).scalar()
+    if not recipient_user:
+        return False
 
     guardian = db.execute(
         text(
@@ -227,72 +256,59 @@ def _queue_absence_notification(
         f"This notification is queued by AttendX."
     )
 
-    # Prevent duplicate absence notification for the
-    # same student/session.
-    existing = db.execute(
-        text(
-            """
-            SELECT id
-            FROM notification_logs
-            WHERE student_id = :student_id
-              AND event_type = 'attendance_absent'
-              AND subject = :subject
-            LIMIT 1
-            """
-        ),
-        {
-            "student_id": student_id,
-            "subject": subject,
-        },
+    # Guardian email is not captured by the existing guardian form.
+    # Keep the configured channel and mobile only when that channel uses it.
+    recipient = mobile if channel in {"sms", "whatsapp", "phone", "sms_email"} else None
+    idempotency_key = f"attendance_absent:{session_id}:{student_id}"
+    already_queued = db.execute(
+        text("SELECT id FROM notification_events WHERE idempotency_key = :key"),
+        {"key": idempotency_key},
     ).scalar()
-
-    if existing:
+    if already_queued:
         return False
 
-    # For SMS/WhatsApp, mobile is the correct recipient.
-    # For email, guardian email is not currently stored
-    # in student_guardians, so recipient remains NULL.
-    recipient = mobile if channel in {
-        "sms",
-        "whatsapp",
-        "phone",
-    } else None
-
-    db.execute(
+    result = db.execute(
         text(
             """
-            INSERT INTO notification_logs
+            INSERT INTO notification_events
             (
+                user_id,
                 student_id,
-                event_type,
                 channel,
                 recipient,
-                subject,
+                event_type,
+                title,
                 message,
-                status
+                delivery_status,
+                idempotency_key
             )
             VALUES
             (
+                :user_id,
                 :student_id,
-                'attendance_absent',
                 :channel,
                 :recipient,
-                :subject,
+                'attendance_absent',
+                :title,
                 :message,
-                'queued'
+                'queued',
+                :idempotency_key
             )
+            ON CONFLICT (idempotency_key) DO NOTHING
+            RETURNING id
             """
         ),
         {
+            "user_id": recipient_user,
             "student_id": student_id,
             "channel": channel,
             "recipient": recipient,
-            "subject": subject,
+            "title": subject,
             "message": message,
+            "idempotency_key": idempotency_key,
         },
     )
-
-    return True
+    return result.scalar_one_or_none() is not None
 
 
 def _finalize_absent_students(
@@ -304,7 +320,7 @@ def _finalize_absent_students(
 
     When a teacher closes a session:
 
-    1. Load all active registered students.
+    1. Load active students assigned to this session's class.
     2. Check attendance_events for this session.
     3. Students without present/late attendance become ABSENT.
     4. Create real attendance_events records.
@@ -313,12 +329,6 @@ def _finalize_absent_students(
 
     session_id = session_row["id"]
 
-    # Existing 70% attendance architecture does not yet have
-    # a student_class_assignments table. Therefore Phase 1
-    # uses all active registered students as the session roster.
-    #
-    # Class-specific student enrollment will be added in the
-    # Classes/Enrollment phase.
     students = db.execute(
         text(
             """
@@ -330,16 +340,18 @@ def _finalize_absent_students(
                 s.roll_number
             FROM students s
             WHERE s.is_active = TRUE
-            ORDER BY
-                CASE
-                    WHEN s.roll_number ~ '^[0-9]+$'
-                    THEN CAST(s.roll_number AS INTEGER)
-                    ELSE NULL
-                END NULLS LAST,
-                s.roll_number,
+              AND EXISTS (
+                  SELECT 1
+                  FROM student_class_assignments sca
+                  WHERE sca.student_id = s.id
+                    AND sca.class_id = :class_id
+                    AND sca.is_active = TRUE
+              )
+            ORDER BY s.roll_number,
                 s.name
             """
-        )
+        ),
+        {"class_id": session_row["class_id"]},
     ).mappings().all()
 
     if not students:
@@ -469,6 +481,7 @@ def _finalize_absent_students(
 
         queued = _queue_absence_notification(
             db=db,
+            session_id=session_id,
             student_id=student["id"],
             student_name=student["name"],
             session_title=session_title,
@@ -559,12 +572,18 @@ def create_session(
     valid_assignment = db.execute(
         text(
             """
-            SELECT id
-            FROM teacher_assignments
-            WHERE teacher_id = :teacher_id
-              AND subject_id = :subject_id
-              AND class_id = :class_id
-              AND is_active = TRUE
+            SELECT ta.id
+            FROM teacher_assignments ta
+            JOIN subjects sub ON sub.id = ta.subject_id
+            JOIN classes c ON c.id = ta.class_id
+            JOIN teachers t ON t.id = ta.teacher_id
+            WHERE ta.teacher_id = :teacher_id
+              AND ta.subject_id = :subject_id
+              AND ta.class_id = :class_id
+              AND ta.is_active = TRUE
+              AND sub.is_active = TRUE
+              AND c.is_active = TRUE
+              AND t.is_active = TRUE
             LIMIT 1
             """
         ),
@@ -654,10 +673,9 @@ def create_session(
 
     db.commit()
 
-    return _session(
-        db,
-        session_id,
-    )
+    # Return the persisted row after commit so the caller receives the
+    # canonical database ID and timestamps.
+    return _session_response(_session(db, session_id))
 
 
 # ============================================================
@@ -728,10 +746,7 @@ def list_sessions(
             detail="Teacher or admin access required.",
         )
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+    return [_session_response(row) for row in rows]
 
 
 # ============================================================
@@ -795,12 +810,13 @@ def close_session(
             UPDATE attendance_sessions
             SET
                 status = 'closed',
-                closed_at = NOW()
+                closed_at = :closed_at
             WHERE id = :id
             """
         ),
         {
             "id": session_id,
+            "closed_at": utcnow(),
         },
     )
 
@@ -829,11 +845,8 @@ def close_session(
             "Attendance session closed and "
             "attendance finalized."
         ),
-        "session": dict(
-            _session(
-                db,
-                session_id,
-            )
+        "session": _session_response(
+            _session(db, session_id)
         ),
         "summary": summary,
     }
@@ -872,17 +885,23 @@ def refresh_qr(
         row["ends_at"],
         utcnow() + timedelta(seconds=60),
     )
+    # Rotate the signing secret as well as the expiry. Expiry timestamps are
+    # encoded as whole seconds, so two rapid refreshes can otherwise produce
+    # identical tokens and leave the previous QR valid.
+    qr_secret = new_qr_secret()
 
     db.execute(
         text(
             """
             UPDATE attendance_sessions
-            SET qr_expires_at = :expires
+            SET qr_expires_at = :expires,
+                qr_secret = :qr_secret
             WHERE id = :id
             """
         ),
         {
             "expires": expires,
+            "qr_secret": qr_secret,
             "id": session_id,
         },
     )
@@ -891,7 +910,7 @@ def refresh_qr(
 
     token = build_qr_token(
         session_id,
-        row["qr_secret"],
+        qr_secret,
         expires,
     )
 
@@ -1016,6 +1035,45 @@ def verify_qr(
         session_id,
     )
 
+    membership = db.execute(
+        text(
+            """
+            SELECT id
+            FROM student_class_assignments
+            WHERE student_id = :student_id
+              AND class_id = :class_id
+              AND is_active = TRUE
+            LIMIT 1
+            """
+        ),
+        {"student_id": student["id"], "class_id": row["class_id"]},
+    ).scalar()
+    if not membership:
+        raise HTTPException(status_code=403, detail="You are not assigned to this class.")
+
+    valid_assignment = db.execute(
+        text(
+            """
+            SELECT ta.id
+            FROM teacher_assignments ta
+            JOIN teachers t ON t.id = ta.teacher_id
+            JOIN subjects sub ON sub.id = ta.subject_id
+            JOIN classes c ON c.id = ta.class_id
+            WHERE ta.teacher_id = :teacher_id
+              AND ta.subject_id = :subject_id
+              AND ta.class_id = :class_id
+              AND ta.is_active = TRUE
+              AND t.is_active = TRUE
+              AND sub.is_active = TRUE
+              AND c.is_active = TRUE
+            LIMIT 1
+            """
+        ),
+        {"teacher_id": row["teacher_id"], "subject_id": row["subject_id"], "class_id": row["class_id"]},
+    ).scalar()
+    if not valid_assignment:
+        raise HTTPException(status_code=403, detail="The session's class or subject assignment is no longer active.")
+
     now = utcnow()
 
     if (
@@ -1031,10 +1089,11 @@ def verify_qr(
             ),
         )
 
-    if not verify_qr_token(
+    if not verify_current_qr_token(
         body.token,
         session_id,
         row["qr_secret"],
+        row["qr_expires_at"],
     ):
         raise HTTPException(
             status_code=400,
@@ -1096,59 +1155,40 @@ def verify_qr(
             ),
         )
 
-    db.execute(
-        text(
-            """
-            INSERT INTO attendance_events
-            (
-                session_id,
-                student_id,
-                method,
-                status,
-                latitude,
-                longitude,
-                distance_m,
-                verification_reason,
-                device_hash
-            )
-            VALUES
-            (
-                :session_id,
-                :student_id,
-                'qr',
-                'present',
-                :latitude,
-                :longitude,
-                :distance_m,
-                'QR + session verification',
-                :device_hash
-            )
-            """
-        ),
-        {
-            "session_id": session_id,
-            "student_id": student["id"],
-            "latitude": body.latitude,
-            "longitude": body.longitude,
-            "distance_m": distance,
-            "device_hash": body.device_hash,
-        },
-    )
-
-    log_audit(
-        db,
-        int(current_user["sub"]),
-        "attendance.verified",
-        "attendance_session",
-        session_id,
-        {
-            "student_id": student["id"],
-            "method": "qr",
-            "distance_m": distance,
-        },
-    )
-
-    db.commit()
+    try:
+        db.execute(
+            text(
+                """
+                INSERT INTO attendance_events
+                (session_id, student_id, method, status, latitude, longitude, distance_m, verification_reason, device_hash)
+                VALUES (:session_id, :student_id, 'qr', 'present', :latitude, :longitude, :distance_m,
+                        'QR + session verification', :device_hash)
+                """
+            ),
+            {
+                "session_id": session_id,
+                "student_id": student["id"],
+                "latitude": body.latitude,
+                "longitude": body.longitude,
+                "distance_m": distance,
+                "device_hash": body.device_hash,
+            },
+        )
+        log_audit(
+            db,
+            int(current_user["sub"]),
+            "attendance.verified",
+            "attendance_session",
+            session_id,
+            {"student_id": student["id"], "method": "qr", "distance_m": distance},
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Attendance has already been recorded for this session.") from exc
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Unable to save attendance. Please try again.") from exc
 
     return {
         "success": True,
@@ -1216,6 +1256,22 @@ def manual_attendance(
             status_code=404,
             detail="Active student not found.",
         )
+
+    enrolled = db.execute(
+        text(
+            """
+            SELECT id
+            FROM student_class_assignments
+            WHERE student_id = :student_id
+              AND class_id = :class_id
+              AND is_active = TRUE
+            LIMIT 1
+            """
+        ),
+        {"student_id": body.student_id, "class_id": row["class_id"]},
+    ).scalar()
+    if not enrolled:
+        raise HTTPException(status_code=403, detail="Student is not assigned to this session's class.")
 
     exists = db.execute(
         text(
@@ -1348,35 +1404,37 @@ def live_attendance(
                 s.name,
                 s.roll_number,
 
-                COALESCE(
-                    e.status,
-                    'absent'
-                ) AS status,
+                CASE
+                    WHEN e.id IS NULL THEN 'pending'
+                    ELSE e.status
+                END AS status,
 
+                e.id AS attendance_id,
                 e.method,
                 e.verified_at,
                 e.distance_m
 
             FROM students s
-
             LEFT JOIN attendance_events e
                 ON e.student_id = s.id
                AND e.session_id = :session_id
-
             WHERE s.is_active = TRUE
+              AND EXISTS (
+                  SELECT 1
+                  FROM student_class_assignments sca
+                  WHERE sca.student_id = s.id
+                    AND sca.class_id = :class_id
+                    AND sca.is_active = TRUE
+              )
 
             ORDER BY
-                CASE
-                    WHEN s.roll_number ~ '^[0-9]+$'
-                    THEN CAST(s.roll_number AS INTEGER)
-                    ELSE NULL
-                END NULLS LAST,
                 s.roll_number,
                 s.name
             """
         ),
         {
             "session_id": session_id,
+            "class_id": row["class_id"],
         },
     ).mappings().all()
 

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { getApiErrorMessage } from "../../utils/errors";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -38,23 +39,7 @@ export default function Login() {
         );
       }
     } catch (err) {
-      console.error("AttendX login failed:", err);
-
-      const detail = err?.response?.data?.detail;
-
-      if (typeof detail === "string") {
-        setError(detail);
-      } else if (Array.isArray(detail)) {
-        setError(
-          detail.map((item) => item.msg || "Invalid input").join(", ")
-        );
-      } else if (err?.message) {
-        setError(err.message);
-      } else {
-        setError(
-          "Login fail hua. Backend, API URL aur credentials check karein."
-        );
-      }
+      setError(getApiErrorMessage(err, "Login fail hua. Backend, API URL aur credentials check karein."));
     } finally {
       setLoading(false);
     }

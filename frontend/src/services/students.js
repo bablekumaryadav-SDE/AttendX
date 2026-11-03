@@ -61,13 +61,24 @@ export async function activateStudent(
   return response.data;
 }
 
+export async function getStudentClassAssignment(studentId) {
+  const response = await api.get(`/students/${studentId}/class-assignment`);
+  return response.data;
+}
+
+export async function assignStudentClass(studentId, payload) {
+  const response = await api.put(`/students/${studentId}/class-assignment`, payload);
+  return response.data;
+}
+
 // ---------------------------------------------------------
 // Face registration
 // ---------------------------------------------------------
 
 export async function registerStudentFace(
   studentId,
-  file
+  file,
+  consentAccepted = false,
 ) {
   if (!studentId) {
     throw new Error(
@@ -79,6 +90,10 @@ export async function registerStudentFace(
     throw new Error(
       "A face image is required."
     );
+  }
+
+  if (consentAccepted !== true) {
+    throw new Error("Student or parent/guardian consent is required for face registration.");
   }
 
   const allowedTypes = [
@@ -109,6 +124,7 @@ export async function registerStudentFace(
     file,
     file.name || "face-registration.jpg"
   );
+  formData.append("consent", "true");
 
   const response = await api.post(
     `/students/${studentId}/face`,

@@ -1,7 +1,9 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
+
+from app.services.face_engine import is_valid_embedding
 
 
 class StudentCreate(BaseModel):
@@ -91,6 +93,11 @@ class FaceRegistrationResponse(BaseModel):
     """
 
     status: str | None = None
+    embedding_json: str | None = Field(default=None, exclude=True)
+
+    @property
+    def has_valid_embedding(self) -> bool:
+        return is_valid_embedding(self.embedding_json)
 
     model_config = ConfigDict(
         from_attributes=True
@@ -120,6 +127,7 @@ class StudentResponse(BaseModel):
 
     face_registration: FaceRegistrationResponse | None = None
 
+    @computed_field(return_type=bool)
     @property
     def face_registered(self) -> bool:
         """
@@ -129,8 +137,10 @@ class StudentResponse(BaseModel):
         """
 
         return (
-            self.face_registration is not None
+            self.is_active
+            and self.face_registration is not None
             and self.face_registration.status == "registered"
+            and self.face_registration.has_valid_embedding
         )
 
     model_config = ConfigDict(

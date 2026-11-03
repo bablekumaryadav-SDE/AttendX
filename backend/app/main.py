@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import get_allowed_origins
 
 from app.api.auth import router as auth_router
 from app.api.students import router as students_router
@@ -26,6 +27,7 @@ from app.api.notifications import router as notifications_router
 from app.api.student_attendance import (
     router as student_attendance_router,
 )
+from app.api.face import router as face_router
 
 
 # ============================================================
@@ -43,16 +45,7 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
-ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:5175",
-    "http://127.0.0.1:5176",
-]
+ALLOWED_ORIGINS = get_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,14 +78,18 @@ app.include_router(
     tags=["Teachers"],
 )
 
+# Register the more specific session routes before the legacy
+# /attendance/{attendance_id} route so "sessions" is not parsed as an ID.
+app.include_router(attendance_sessions_router)
+
 app.include_router(
     attendance_router,
     prefix="/attendance",
     tags=["Attendance"],
 )
 
-app.include_router(attendance_sessions_router)
 app.include_router(student_attendance_router)
+app.include_router(face_router)
 app.include_router(
     subjects_router,
     prefix="/subjects",
@@ -119,7 +116,6 @@ app.include_router(
 
 app.include_router(
     dashboard_router,
-    prefix="/dashboard",
     tags=["Dashboard"],
 )
 

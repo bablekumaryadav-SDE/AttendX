@@ -8,18 +8,28 @@ import React, {
  
 import { 
   activateStudent, 
+  assignStudentClass,
   createStudent, 
   deactivateStudent, 
   getStudents, 
+  getStudentClassAssignment,
   getStudentGuardian, 
   registerStudentFace, 
   removeStudentFace, 
   saveStudentGuardian, 
   updateStudent, 
 } from "../../../services/students"; 
+import { getClasses } from "../../../services/academic";
+import {
+  canStartFaceCamera,
+  getCameraErrorMessage,
+  requestCameraStream,
+  stopCameraStream,
+} from "../../../utils/cameraAccess";
  
 import "./Students.css"; 
  
+import { getApiErrorMessage } from "../../../utils/errors.js";
 /* ========================================================= 
    EMPTY FORM 
 ========================================================= */ 
@@ -39,6 +49,7 @@ const emptyForm = {
   academic_year: "", 
   semester: "", 
   section: "", 
+  class_id: "",
   admission_date: "", 
   address: "", 
   city: "", 
@@ -78,6 +89,7 @@ function Students() {
   ------------------------------------------------------- */ 
  
   const [students, setStudents] = useState([]); 
+  const [classes, setClasses] = useState([]);
   const [search, setSearch] = useState(""); 
  
   const [loading, setLoading] = useState(true); 
@@ -101,7 +113,11 @@ function Students() {
   ------------------------------------------------------- */ 
  
   const [cameraActive, setCameraActive] = useState(false); 
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState(""); 
+  const [faceConsentAccepted, setFaceConsentAccepted] = useState(false);
+  const [pendingFaceStudentId, setPendingFaceStudentId] = useState(null);
  
   const [faceFile, setFaceFile] = useState(null); 
   const [facePreviewUrl, setFacePreviewUrl] = useState(""); 
@@ -113,6 +129,10 @@ function Students() {
   const videoRef = useRef(null); 
   const canvasRef = useRef(null); 
   const streamRef = useRef(null); 
+  const savedStudentIdRef = useRef(null);
+  const cameraRequestRef = useRef(false);
+  const cameraRequestIdRef = useRef(0);
+  const mountedRef = useRef(true);
  
   /* ------------------------------------------------------- 
      GUARDIAN 
@@ -134,29 +154,24 @@ function Students() {
   const isViewMode = modalMode === "view"; 
   const isCreateMode = modalMode === "create"; 
   const isEditMode = modalMode === "edit"; 
+  const registrationStudentId =
+    savedStudentIdRef.current ?? editingStudent?.id ?? pendingFaceStudentId;
  
   /* ========================================================= 
      CAMERA STOP 
   ========================================================= */ 
  
   const stopCamera = useCallback(() => { 
-    if (streamRef.current) { 
-      streamRef.current.getTracks().forEach((track) => { 
-        try { 
-          track.stop(); 
-        } catch (error) { 
-          console.warn("Unable to stop camera track:", error); 
-        } 
-      }); 
- 
-      streamRef.current = null; 
-    } 
+    cameraRequestIdRef.current += 1;
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
  
     if (videoRef.current) { 
       videoRef.current.pause?.(); 
       videoRef.current.srcObject = null; 
     } 
  
+    setCameraReady(false);
     setCameraActive(false); 
   }, []); 
  
@@ -190,39 +205,60 @@ function Students() {
  
     const video = videoRef.current; 
     const stream = streamRef.current; 
+    let cancelled = false;
  
     video.srcObject = stream; 
     video.muted = true; 
     video.playsInline = true; 
  
+    const markReady = () => {
+      if (!cancelled && video.videoWidth > 0 && video.videoHeight > 0) {
+        setCameraReady(true);
+        setCameraError("");
+      }
+    };
+
     const playVideo = async () => { 
       try { 
         await video.play(); 
-      } catch (error) { 
-        console.error("Unable to start camera preview:", error); 
+        markReady();
+      } catch (playError) {
+        if (!cancelled) {
+          setCameraError(getCameraErrorMessage(playError));
+          stopCamera();
+        }
       } 
     }; 
  
-    if (video.readyState >= 1) { 
-      void playVideo(); 
-    } else { 
-      video.onloadedmetadata = playVideo; 
-    } 
+    video.addEventListener("loadeddata", markReady);
+    video.addEventListener("playing", markReady);
+    void playVideo();
  
     return () => { 
-      video.onloadedmetadata = null; 
+      cancelled = true;
+      video.removeEventListener("loadeddata", markReady);
+      video.removeEventListener("playing", markReady);
+      if (video.srcObject === stream) {
+        video.pause?.();
+        video.srcObject = null;
+      }
     }; 
-  }, [cameraActive]); 
+  }, [cameraActive, stopCamera]);
  
   /* ========================================================= 
      STOP CAMERA ON UNMOUNT 
   ========================================================= */ 
  
   useEffect(() => { 
+    mountedRef.current = true;
     return () => { 
-      stopCamera(); 
+      mountedRef.current = false;
+      cameraRequestIdRef.current += 1;
+      cameraRequestRef.current = false;
+      stopCameraStream(streamRef.current);
+      streamRef.current = null;
     }; 
-  }, [stopCamera]); 
+  }, []);
  
   /* ========================================================= 
      FACE PREVIEW URL 
@@ -256,12 +292,10 @@ function Students() {
  
       setStudents(Array.isArray(data) ? data : []); 
     } catch (err) { 
-      console.error("Unable to load students:", err); 
- 
       setError( 
-        err?.response?.data?.detail || 
+        getApiErrorMessage(err,
           "Unable to load students. Please try again." 
-      ); 
+      ));
     } finally { 
       setLoading(false); 
     } 
@@ -270,6 +304,12 @@ function Students() {
   useEffect(() => { 
     loadStudents(); 
   }, [loadStudents]); 
+
+  useEffect(() => {
+    getClasses()
+      .then((data) => setClasses(Array.isArray(data) ? data : []))
+      .catch((err) => setError(getApiErrorMessage(err, "Unable to load classes for student assignment.")));
+  }, []);
  
   /* ========================================================= 
      SEARCH 
@@ -326,6 +366,7 @@ function Students() {
  
     setFaceFile(null); 
     setCameraError(""); 
+    setFaceConsentAccepted(false);
     setFaceSaving(false); 
     setError(""); 
     setGuardianLoading(false); 
@@ -338,6 +379,8 @@ function Students() {
   const openAddModal = () => { 
     resetModalState(); 
  
+    savedStudentIdRef.current = null;
+    setPendingFaceStudentId(null);
     setModalMode("create"); 
     setEditingStudent(null); 
     setForm({ 
@@ -378,6 +421,7 @@ function Students() {
       student.semester ?? "", 
     section: 
       student.section || "", 
+    class_id: student.class_id ? String(student.class_id) : "",
     admission_date: 
       student.admission_date || "", 
     address: 
@@ -436,15 +480,25 @@ function Students() {
       })); 
     } catch (err) { 
       if (err?.response?.status !== 404) { 
-        console.error( 
-          "Unable to load guardian details:", 
-          err 
-        ); 
       } 
     } finally { 
       setGuardianLoading(false); 
     } 
   }; 
+
+  const loadClassAssignmentIntoForm = async (studentId) => {
+    try {
+      const assignment = await getStudentClassAssignment(studentId);
+      if (!assignment) return;
+      setForm((previous) => ({
+        ...previous,
+        class_id: String(assignment.class_id),
+        academic_year: assignment.academic_year || previous.academic_year,
+        semester: assignment.semester ?? previous.semester,
+      }));
+    } catch (err) {
+    }
+  };
  
   /* ========================================================= 
      OPEN EDIT 
@@ -453,13 +507,17 @@ function Students() {
   const openEditModal = async (student) => { 
     resetModalState(); 
  
+    savedStudentIdRef.current = student.id;
     setModalMode("edit"); 
     setEditingStudent(student); 
     setForm(baseStudentForm(student)); 
  
     setModalOpen(true); 
  
-    await loadGuardianIntoForm(student.id); 
+    await Promise.all([
+      loadGuardianIntoForm(student.id),
+      loadClassAssignmentIntoForm(student.id),
+    ]);
   }; 
  
   /* ========================================================= 
@@ -469,13 +527,17 @@ function Students() {
   const openViewModal = async (student) => { 
     resetModalState(); 
  
+    savedStudentIdRef.current = student.id;
     setModalMode("view"); 
     setEditingStudent(student); 
     setForm(baseStudentForm(student)); 
  
     setModalOpen(true); 
  
-    await loadGuardianIntoForm(student.id); 
+    await Promise.all([
+      loadGuardianIntoForm(student.id),
+      loadClassAssignmentIntoForm(student.id),
+    ]);
   }; 
  
   /* ========================================================= 
@@ -489,6 +551,7 @@ function Students() {
  
     resetModalState(); 
  
+    savedStudentIdRef.current = null;
     setModalOpen(false); 
     setEditingStudent(null); 
     setForm({ 
@@ -522,86 +585,56 @@ function Students() {
   ========================================================= */ 
  
   const startCamera = async ( 
-    requestedMode = cameraFacingMode 
+    requestedMode = cameraFacingMode,
+    studentId = savedStudentIdRef.current ?? editingStudent?.id ?? pendingFaceStudentId,
   ) => { 
+    if (cameraRequestRef.current || streamRef.current) {
+      return;
+    }
+
+    if (!faceConsentAccepted) {
+      setCameraError("Confirm the student's or guardian's consent before opening the camera.");
+      return;
+    }
+
     setCameraError(""); 
- 
-    if ( 
-      !navigator.mediaDevices || 
-      !navigator.mediaDevices.getUserMedia 
-    ) { 
-      setCameraError( 
-        "Camera access is not available in this browser. Please use the upload option." 
-      ); 
- 
-      return; 
-    } 
+    setCameraReady(false);
+    const requestId = cameraRequestIdRef.current + 1;
+    cameraRequestIdRef.current = requestId;
+    cameraRequestRef.current = true;
+    setCameraStarting(true);
  
     try { 
-      stopCamera(); 
- 
-      const stream = 
-        await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            facingMode: { 
-              ideal: requestedMode, 
-            }, 
- 
-            width: { 
-              ideal: 1280, 
-              min: 640, 
-            }, 
- 
-            height: { 
-              ideal: 960, 
-              min: 480, 
-            }, 
- 
-            frameRate: { 
-              ideal: 30, 
-              min: 15, 
-            }, 
-          }, 
- 
-          audio: false, 
-        }); 
+      if (!studentId) {
+        setCameraError("Save the student details first so the face photo is linked to the saved student account.");
+        return;
+      }
+      savedStudentIdRef.current = studentId;
+
+      const stream = await requestCameraStream({
+        mediaDevices: navigator.mediaDevices,
+        secureContext: window.isSecureContext,
+        facingMode: requestedMode,
+      });
+
+      if (!mountedRef.current || requestId !== cameraRequestIdRef.current) {
+        stopCameraStream(stream);
+        return;
+      }
  
       streamRef.current = stream; 
  
       setCameraActive(true); 
       setCameraError(""); 
-    } catch (err) { 
-      console.error( 
-        "Camera initialization failed:", 
-        err 
-      ); 
- 
-      if ( 
-        err?.name === 
-        "NotAllowedError" 
-      ) { 
-        setCameraError( 
-          "Camera permission was denied. Please allow camera access in your browser." 
-        ); 
-      } else if ( 
-        err?.name === 
-        "NotFoundError" 
-      ) { 
-        setCameraError( 
-          "No camera was found on this device." 
-        ); 
-      } else if ( 
-        err?.name === 
-        "NotReadableError" 
-      ) { 
-        setCameraError( 
-          "The camera is already being used by another application." 
-        ); 
-      } else { 
-        setCameraError( 
-          "Unable to start the camera. Please try again or upload a photo." 
-        ); 
-      } 
+    } catch (cameraFailure) {
+      if (mountedRef.current) {
+        setCameraError(getCameraErrorMessage(cameraFailure));
+      }
+    } finally {
+      cameraRequestRef.current = false;
+      if (requestId === cameraRequestIdRef.current) {
+        if (mountedRef.current) setCameraStarting(false);
+      }
     } 
   }; 
  
@@ -610,6 +643,8 @@ function Students() {
   ========================================================= */ 
  
   const switchCamera = async () => { 
+    if (!cameraReady || cameraStarting) return;
+
     const nextMode = 
       cameraFacingMode === "user" 
         ? "environment" 
@@ -619,9 +654,7 @@ function Students() {
  
     stopCamera(); 
  
-    window.setTimeout(() => { 
-      void startCamera(nextMode); 
-    }, 150); 
+    void startCamera(nextMode, editingStudent?.id);
   }; 
  
   /* ========================================================= 
@@ -631,6 +664,16 @@ function Students() {
   const captureFace = async () => { 
     const video = videoRef.current; 
     const canvas = canvasRef.current; 
+
+    if (!faceConsentAccepted) {
+      setCameraError("Confirm the student's or guardian's consent before capturing a face image.");
+      return;
+    }
+
+    if (!cameraReady) {
+      setCameraError("Wait until the live camera preview is ready before capturing an image.");
+      return;
+    }
  
     if (!video || !canvas) { 
       setCameraError( 
@@ -840,6 +883,16 @@ function Students() {
     if (!file) { 
       return; 
     } 
+
+    if (isCreateMode || !(savedStudentIdRef.current ?? editingStudent?.id ?? pendingFaceStudentId)) {
+      setCameraError("Save the student details first. Face images must be linked to the saved student account.");
+      return;
+    }
+
+    if (!faceConsentAccepted) {
+      setCameraError("Confirm the student's or guardian's consent before selecting a face image.");
+      return;
+    }
  
     if ( 
       !file.type.startsWith( 
@@ -884,6 +937,7 @@ function Students() {
     setError(""); 
     setNotice(""); 
     setRegistrationWarning(""); 
+    const warnings = [];
  
     if (!form.name.trim()) { 
       setError( 
@@ -923,17 +977,14 @@ function Students() {
  
       return; 
     } 
+
+    if (isCreateMode && !form.class_id) {
+      setError("Assign the student to an active class before registration.");
+      return;
+    }
  
-    /* 
-     * Face photo is required for NEW registrations. 
-     * This makes sure every attendance-ready student 
-     * has a biometric reference image. 
-     */ 
-    if (isCreateMode && !faceFile) { 
-      setError( 
-        "Please capture or upload the student's face photo before registration." 
-      ); 
- 
+    if (faceFile && !faceConsentAccepted) {
+      setError("Confirm the student's or guardian's consent before registering a face image.");
       return; 
     } 
  
@@ -1036,6 +1087,8 @@ function Students() {
       }; 
  
       let savedStudent; 
+      const existingStudentId =
+        savedStudentIdRef.current ?? editingStudent?.id;
  
       /* 
        * CREATE / UPDATE STUDENT 
@@ -1043,7 +1096,7 @@ function Students() {
       if (isEditMode) { 
         savedStudent = 
           await updateStudent( 
-            editingStudent.id, 
+            existingStudentId,
             payload 
           ); 
       } else { 
@@ -1052,6 +1105,23 @@ function Students() {
             payload 
           ); 
       } 
+
+      if (!savedStudent?.id) {
+        throw new Error("The backend saved no student ID. Face registration cannot continue until the saved student is confirmed.");
+      }
+      savedStudentIdRef.current = savedStudent.id;
+
+      if (form.class_id) {
+        try {
+          await assignStudentClass(savedStudent.id, {
+            class_id: Number(form.class_id),
+            academic_year: form.academic_year.trim() || null,
+            semester: form.semester ? Number(form.semester) : null,
+          });
+        } catch (classError) {
+          warnings.push(getApiErrorMessage(classError, "Student was saved, but class assignment could not be saved."));
+        }
+      }
  
       /* 
        * SAVE GUARDIAN 
@@ -1067,36 +1137,49 @@ function Students() {
           guardianError 
         ); 
  
-        setRegistrationWarning( 
-          guardianError?.response 
-            ?.data?.detail || 
-            "Student was saved, but parent/guardian information could not be saved." 
-        ); 
+        warnings.push(getApiErrorMessage(guardianError, "Student was saved, but parent/guardian information could not be saved."));
       } 
+
+      if (isCreateMode) {
+        savedStudentIdRef.current = savedStudent.id;
+        setEditingStudent(savedStudent);
+        setModalMode("edit");
+        setPendingFaceStudentId(savedStudent.id);
+        setNotice(warnings.length
+          ? `Student details saved. ${warnings.join(" ")}`
+          : "Student details saved. Confirm face consent, then click Start Camera.");
+        // Do not request camera access here: the permission request must follow
+        // the user's explicit Start Camera click and its browser user gesture.
+        void loadStudents();
+        return;
+      }
  
       /* 
        * REGISTER / REPLACE FACE 
        */ 
+      let faceRegistered = false;
       if (faceFile) { 
+        if (!faceConsentAccepted) {
+          setError("Confirm the student's or guardian's consent before registering a face image.");
+          return;
+        }
+
         try { 
           setFaceSaving(true); 
  
-          savedStudent = 
-            await registerStudentFace( 
-              savedStudent.id, 
-              faceFile 
-            ); 
+          const faceResponse = await registerStudentFace(
+            savedStudent.id,
+            faceFile,
+            faceConsentAccepted,
+          );
+          if (!faceResponse?.face_registered) {
+            throw new Error("The server did not confirm face registration. Please retry.");
+          }
+          savedStudent = faceResponse;
+          faceRegistered = true;
         } catch (faceError) { 
-          console.error( 
-            "Face registration failed:", 
-            faceError 
-          ); 
- 
-          setRegistrationWarning( 
-            faceError?.response 
-              ?.data?.detail || 
-              "Student was saved, but face registration could not be completed." 
-          ); 
+          setCameraError(getApiErrorMessage(faceError, "Student details are saved, but face registration failed. Retry without creating another student."));
+          return;
         } finally { 
           setFaceSaving(false); 
         } 
@@ -1104,10 +1187,17 @@ function Students() {
  
       const isNewRegistration = 
         isCreateMode; 
+
+      if (warnings.length) setRegistrationWarning(warnings.join(" "));
  
       closeModal(true); 
  
       await loadStudents(); 
+
+      if (faceRegistered) {
+        setPendingFaceStudentId(null);
+        setFaceConsentAccepted(false);
+      }
  
       /* 
        * SHOW REGISTRATION SUCCESS CARD 
@@ -1116,22 +1206,18 @@ function Students() {
         setRegisteredStudent( 
           savedStudent 
         ); 
+      } else if (faceRegistered && pendingFaceStudentId === savedStudent.id) {
+        setRegisteredStudent(savedStudent);
       } else { 
-        setNotice( 
-          registrationWarning || 
-            "Student details updated successfully." 
-        ); 
+        setNotice(faceRegistered
+          ? "Face registration confirmed by the server."
+          : warnings.join(" ") || "Student details updated successfully.");
       } 
     } catch (err) { 
-      console.error( 
-        "Student save failed:", 
-        err 
-      ); 
- 
       setError( 
-        err?.response?.data?.detail || 
+        getApiErrorMessage(err,
           "Unable to save student. Please try again." 
-      ); 
+      ));
     } finally { 
       setSaving(false); 
       setFaceSaving(false); 
@@ -1168,12 +1254,10 @@ function Students() {
  
       await loadStudents(); 
     } catch (err) { 
-      console.error(err); 
- 
       setError( 
-        err?.response?.data?.detail || 
+        getApiErrorMessage(err,
           "Unable to deactivate student." 
-      ); 
+      ));
     } 
   }; 
  
@@ -1198,12 +1282,10 @@ function Students() {
  
       await loadStudents(); 
     } catch (err) { 
-      console.error(err); 
- 
       setError( 
-        err?.response?.data?.detail || 
+        getApiErrorMessage(err,
           "Unable to activate student." 
-      ); 
+      ));
     } 
   }; 
  
@@ -1260,12 +1342,10 @@ function Students() {
         "Face registration removed successfully." 
       ); 
     } catch (err) { 
-      console.error(err); 
- 
       setError( 
-        err?.response?.data?.detail || 
+        getApiErrorMessage(err,
           "Unable to remove face registration." 
-      ); 
+      ));
     } finally { 
       setFaceSaving(false); 
     } 
@@ -1379,6 +1459,44 @@ function Students() {
           )} 
         </div> 
  
+        <label className="guardian-check face-consent-check">
+          <input
+            type="checkbox"
+            checked={faceConsentAccepted}
+            onChange={(event) => {
+              setFaceConsentAccepted(event.target.checked);
+              setCameraError("");
+            }}
+            disabled={saving || faceSaving}
+          />
+          <span>
+            <strong>Face image consent</strong>
+            <small>
+              I confirm the student or parent/guardian has explicitly agreed to capture and use this face image for attendance verification.
+            </small>
+          </span>
+        </label>
+
+        {pendingFaceStudentId === editingStudent?.id && (
+          <div className="face-photo-ready-note" role="status" aria-live="polite">
+            {faceConsentAccepted
+              ? `Student details saved. Student ID ${editingStudent?.student_code || editingStudent?.id}. Requesting or ready for camera permission.`
+              : `Student details saved. Student ID ${editingStudent?.student_code || editingStudent?.id}. Confirm consent, then start the camera.`}
+          </div>
+        )}
+
+        <div className="face-camera-progress" role="status" aria-live="polite">
+          {!registrationStudentId
+            ? "Save student details first."
+            : cameraStarting
+            ? "Requesting camera permission..."
+            : cameraReady
+            ? "Camera ready. Capture a live frame when the student is positioned."
+            : cameraActive
+            ? "Camera stream opened. Waiting for the live video frame..."
+            : "Camera is off."}
+        </div>
+
         <div className="face-camera-layout"> 
           {/* ================================================= 
               CAMERA 
@@ -1427,13 +1545,13 @@ function Students() {
                   </div> 
  
                   <strong> 
-                    Face camera ready 
+                    Camera not started
                   </strong> 
  
                   <span> 
-                    Start the camera and place 
-                    the student's complete face 
-                    inside the positioning guide. 
+                    {registrationStudentId
+                      ? "Confirm consent, then start the live camera preview."
+                      : "Save student details first."}
                   </span> 
                 </div> 
               )} 
@@ -1547,19 +1665,22 @@ function Students() {
                 <button 
                   type="button" 
                   className="primary-button camera-control-button camera-start-button" 
-                  onClick={() => 
-                    void startCamera() 
-                  } 
-                  disabled={ 
-                    saving || 
-                    faceSaving 
-                  } 
+                  onClick={() =>
+                    void startCamera(cameraFacingMode, registrationStudentId)
+                  }
+                  disabled={!canStartFaceCamera({
+                    studentId: isCreateMode ? null : registrationStudentId,
+                    consentAccepted: faceConsentAccepted,
+                    saving,
+                    faceSaving,
+                    cameraStarting,
+                  })}
                 > 
                   <span className="button-orb"> 
                     ◉ 
                   </span> 
  
-                  Start Camera 
+                  {cameraStarting ? "Requesting Permission..." : "Start Camera"}
                 </button> 
               )} 
  
@@ -1575,7 +1696,8 @@ function Students() {
                   } 
                   disabled={ 
                     saving || 
-                    faceSaving 
+                    faceSaving ||
+                    !cameraReady
                   } 
                 > 
                   <span className="button-orb"> 
@@ -1593,7 +1715,8 @@ function Students() {
                   } 
                   disabled={ 
                     saving || 
-                    faceSaving 
+                    faceSaving ||
+                    cameraStarting
                   } 
                 > 
                   ↻ Switch Camera 
@@ -1626,7 +1749,9 @@ function Students() {
                 }} 
                 disabled={ 
                   saving || 
-                  faceSaving 
+                  faceSaving ||
+                  isCreateMode ||
+                  !faceConsentAccepted
                 } 
               > 
                 ↻ Retake Photo 
@@ -1648,7 +1773,9 @@ function Students() {
                 } 
                 disabled={ 
                   saving || 
-                  faceSaving 
+                  faceSaving ||
+                  isCreateMode ||
+                  !faceConsentAccepted
                 } 
                 style={{ 
                   display: "none", 
@@ -1685,13 +1812,11 @@ function Students() {
  
                   <div> 
                     <strong> 
-                      Face photo required 
+                      Face reference needed for face attendance
                     </strong> 
  
                     <small> 
-                      Capture a photo before 
-                      registering this student 
-                      for attendance. 
+                      Save the student details first. Afterward, confirm consent and capture a face image for attendance.
                     </small> 
                   </div> 
                 </div> 
@@ -1778,10 +1903,10 @@ function Students() {
  
         <p className="face-panel-footer-hint"> 
           {faceFile 
-            ? "Photo captured successfully. Save the student profile to register this face for attendance verification." 
+            ? "Photo captured. Save changes to send it to the authorized face-registration API."
             : isCreateMode 
-            ? "A face photo is required for a new student so the student can participate in face-based attendance." 
-            : "You can capture a new face photo to replace the existing attendance reference."} 
+            ? "Save student details first. After saving, confirm explicit consent and click Start Camera."
+            : "With explicit student or guardian consent, capture a new face photo to register or replace the attendance reference."}
         </p> 
       </section> 
     ); 
@@ -3197,6 +3322,32 @@ function Students() {
                         placeholder="B.Tech Computer Science & Engineering" 
                       /> 
                     </div> 
+
+                    <div className="form-field full">
+                      <label htmlFor="student-class-assignment">
+                        Active Class Assignment
+                        {isCreateMode && <span className="required-mark"> *</span>}
+                      </label>
+                      <select
+                        id="student-class-assignment"
+                        name="class_id"
+                        value={form.class_id}
+                        onChange={handleChange}
+                        required={isCreateMode}
+                        disabled={isViewMode}
+                      >
+                        <option value="">Select an active class</option>
+                        {classes.filter((item) => item.is_active === true).map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}{item.section ? ` · ${item.section}` : ""}
+                            {item.academic_year ? ` (${item.academic_year})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      {classes.filter((item) => item.is_active === true).length === 0 && (
+                        <small>Create an active class before registering a student for attendance.</small>
+                      )}
+                    </div>
  
                     <div className="form-field"> 
                       <label htmlFor="student-academic-year"> 
@@ -3690,7 +3841,7 @@ function Students() {
                         : "Saving..." 
                       : isEditMode 
                       ? "Save Changes" 
-                      : "Register Student"} 
+                      : "Save Student Details"}
                   </button> 
  
                 </div> 
@@ -3823,9 +3974,26 @@ function Students() {
             > 
               {registeredStudent.face_registered 
                 ? "✓ Face reference registered — student is ready for face-based attendance." 
-                : registrationWarning || 
-                  "Student registered, but the face reference was not registered."} 
+                : "Student registered, but the face reference was not registered."}
             </div> 
+
+            {registrationWarning && (
+              <div
+                role="alert"
+                style={{
+                  marginTop: 10,
+                  padding: "11px 13px",
+                  border: "1px solid #fed7aa",
+                  borderRadius: 10,
+                  background: "#fff7ed",
+                  color: "#9a3412",
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                }}
+              >
+                Setup warning: {registrationWarning}
+              </div>
+            )}
  
             {/* ATTENDANCE STATUS */} 
  

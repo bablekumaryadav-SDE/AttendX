@@ -1,5 +1,21 @@
 import api from "./api";
 
+export async function getMyFaceStatus() {
+  const response = await api.get("/face/me/status");
+  return response.data;
+}
+
+export async function registerMyFace(file) {
+  if (!file) throw new Error("Capture a face image before registration.");
+  const formData = new FormData();
+  formData.append("file", file, file.name || "my-face.jpg");
+  const response = await api.post("/face/me/register", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 30000,
+  });
+  return response.data;
+}
+
 
 // ============================================================
 // Teacher attendance sessions
@@ -7,7 +23,8 @@ import api from "./api";
 
 export async function getAttendanceSessions() {
   const response = await api.get(
-    "/attendance/sessions"
+    "/attendance/sessions",
+    { timeout: 10000 }
   );
 
   return response.data;
@@ -19,7 +36,8 @@ export async function createAttendanceSession(
 ) {
   const response = await api.post(
     "/attendance/sessions",
-    payload
+    payload,
+    { timeout: 15000 }
   );
 
   return response.data;
@@ -105,6 +123,19 @@ export async function submitStudentQrAttendance(
     payload
   );
 
+  return response.data;
+}
+
+export async function submitStudentFaceAttendance(sessionId, file, coordinates = null) {
+  if (!sessionId || !file) throw new Error("An active session and face capture are required.");
+  const formData = new FormData();
+  formData.append("file", file, file.name || "attendance-face.jpg");
+  if (coordinates?.latitude != null) formData.append("latitude", String(coordinates.latitude));
+  if (coordinates?.longitude != null) formData.append("longitude", String(coordinates.longitude));
+  const response = await api.post(`/attendance/student/sessions/${sessionId}/face`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 30000,
+  });
   return response.data;
 }
 

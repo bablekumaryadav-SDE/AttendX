@@ -53,7 +53,10 @@ def get_teacher_dashboard(
             TeacherAssignment.class_id == Class.id
         )
         .filter(
-            TeacherAssignment.teacher_id == teacher.id
+            TeacherAssignment.teacher_id == teacher.id,
+            TeacherAssignment.is_active.is_(True),
+            Subject.is_active.is_(True),
+            Class.is_active.is_(True),
         )
         .all()
     )

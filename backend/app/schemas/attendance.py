@@ -36,7 +36,7 @@ class AttendanceResponse(BaseModel):
     id: int
     student_id: int
     teacher_id: int
-    date: date
+    date: datetime
     status: str
 
     model_config = ConfigDict(

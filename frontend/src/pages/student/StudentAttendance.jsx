@@ -5,22 +5,24 @@ import React, {
   useRef,
   useState,
 } from "react";
+import jsQR from "jsqr";
+import { useLocation as useRouterLocation } from "react-router-dom";
 
 import {
+  getMyFaceStatus,
+  registerMyFace,
   getActiveStudentSessions,
   getMyAttendance,
+  submitStudentFaceAttendance,
   submitStudentQrAttendance,
 } from "../../services/attendance";
 
 import "./StudentAttendance.css";
+import { getApiErrorMessage } from "../../utils/errors";
 
 
 function getErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.message ||
-    fallback
-  );
+  return getApiErrorMessage(error, fallback);
 }
 
 
@@ -68,8 +70,10 @@ function formatTime(value) {
 
 
 export default function StudentAttendance() {
+  const routeLocation = useRouterLocation();
   const [sessions, setSessions] = useState([]);
   const [records, setRecords] = useState([]);
+  const [faceStatus, setFaceStatus] = useState(null);
 
   const [selectedSession, setSelectedSession] =
     useState(null);
@@ -87,6 +91,10 @@ export default function StudentAttendance() {
 
   const [scannerActive, setScannerActive] =
     useState(false);
+
+  const [faceCameraActive, setFaceCameraActive] = useState(false);
+  const [faceRegistrationMode, setFaceRegistrationMode] = useState(false);
+  const [faceSubmitting, setFaceSubmitting] = useState(false);
 
   const [scannerSupported, setScannerSupported] =
     useState(false);
@@ -107,8 +115,12 @@ export default function StudentAttendance() {
     useState("all");
 
   const videoRef = useRef(null);
+  const faceVideoRef = useRef(null);
+  const faceCanvasRef = useRef(null);
   const streamRef = useRef(null);
+  const faceStreamRef = useRef(null);
   const scannerTimerRef = useRef(null);
+  const appliedRouteSelectionRef = useRef(null);
 
 
   const loadData = useCallback(
@@ -125,9 +137,11 @@ export default function StudentAttendance() {
         const [
           activeSessions,
           attendanceRecords,
+          registrationStatus,
         ] = await Promise.all([
           getActiveStudentSessions(),
           getMyAttendance(),
+          getMyFaceStatus(),
         ]);
 
         setSessions(
@@ -141,12 +155,8 @@ export default function StudentAttendance() {
             ? attendanceRecords
             : []
         );
+        setFaceStatus(registrationStatus || null);
       } catch (error) {
-        console.error(
-          "Student attendance loading failed:",
-          error
-        );
-
         setError(
           getErrorMessage(
             error,
@@ -166,19 +176,86 @@ export default function StudentAttendance() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const requested = routeLocation.state;
+    if (loading) return;
+    if (requested?.method === "register-face") {
+      setFaceRegistrationMode(true);
+      window.requestAnimationFrame(() => document.getElementById("student-face-registration")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+      return;
+    }
+    if (!requested?.sessionId && ["qr", "face"].includes(requested?.method)) {
+      const marker = `${routeLocation.key}:${requested.method}:choose-session`;
+      if (appliedRouteSelectionRef.current === marker) return;
+      appliedRouteSelectionRef.current = marker;
+      setNotice(`Choose an active session below, then open the ${requested.method === "qr" ? "QR scanner" : "face camera"}.`);
+      window.requestAnimationFrame(() => document.getElementById("student-live-session-list")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      return;
+    }
+    if (!requested?.sessionId) return;
+
+    const marker = `${routeLocation.key}:${requested.sessionId}:${requested.method || ""}`;
+    if (appliedRouteSelectionRef.current === marker) return;
+
+    const session = sessions.find(
+      (item) => String(item.id) === String(requested.sessionId)
+    );
+    if (!session) return;
+
+    appliedRouteSelectionRef.current = marker;
+    setSelectedSession(session);
+    setToken("");
+    setError("");
+    setNotice(
+      requested.method === "face"
+        ? "Session selected. Open the face camera below to verify attendance."
+        : "Session selected. Open the scanner below to scan your teacher's current QR code."
+    );
+
+    window.requestAnimationFrame(() => {
+      const targetId = requested.method === "face"
+        ? "student-face-attendance"
+        : "student-qr-attendance";
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }, [loading, routeLocation.key, routeLocation.state, sessions]);
+
+  // Refresh open sessions and attendance history while this page is visible.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadData(true);
+      }
+    }, 15000);
+
+    return () => window.clearInterval(timer);
+  }, [loadData]);
+
 
   useEffect(() => {
-    setScannerSupported(
-      "BarcodeDetector" in window
-    );
+    setScannerSupported(true);
   }, []);
 
 
   useEffect(() => {
     return () => {
       stopScanner();
+      faceStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    if (!faceCameraActive || !faceVideoRef.current || !faceStreamRef.current) return undefined;
+    const video = faceVideoRef.current;
+    video.srcObject = faceStreamRef.current;
+    video.muted = true;
+    video.playsInline = true;
+    video.play().catch(() => setError("Camera preview could not start. Check browser camera permissions."));
+    return () => { video.srcObject = null; };
+  }, [faceCameraActive]);
 
 
   const stats = useMemo(() => {
@@ -233,6 +310,8 @@ export default function StudentAttendance() {
 
 
   function selectSession(session) {
+    if (faceCameraActive) stopFaceCamera();
+    if (scannerActive) void stopScanner();
     setSelectedSession(session);
     setToken("");
     setError("");
@@ -386,11 +465,6 @@ export default function StudentAttendance() {
         });
       }
     } catch (error) {
-      console.error(
-        "Student attendance submission failed:",
-        error
-      );
-
       setError(
         getErrorMessage(
           error,
@@ -415,15 +489,10 @@ export default function StudentAttendance() {
       return;
     }
 
-    if (!("BarcodeDetector" in window)) {
-      setError(
-        "QR camera scanning is not supported by this browser. Use the QR token field below."
-      );
-
-      return;
-    }
-
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Camera access requires HTTPS or localhost in a supported browser.");
+      }
       const permissionStream =
         await navigator.mediaDevices.getUserMedia(
           {
@@ -448,14 +517,19 @@ export default function StudentAttendance() {
 
       setScannerActive(true);
 
-      const detector =
-        new window.BarcodeDetector({
+      const detector = "BarcodeDetector" in window
+        ? new window.BarcodeDetector({
           formats: ["qr_code"],
-        });
+        })
+        : null;
+      const scanCanvas = document.createElement("canvas");
+      const scanContext = scanCanvas.getContext("2d", { willReadFrequently: true });
+      let scanInFlight = false;
 
       scannerTimerRef.current =
         window.setInterval(
           async () => {
+            if (scanInFlight) return;
             if (!videoRef.current) {
               return;
             }
@@ -468,17 +542,24 @@ export default function StudentAttendance() {
             }
 
             try {
-              const barcodes =
-                await detector.detect(
-                  videoRef.current
-                );
+              scanInFlight = true;
+              let scannedValue = "";
+              if (detector) {
+                const barcodes = await detector.detect(videoRef.current);
+                scannedValue = barcodes[0]?.rawValue || "";
+              } else if (scanContext) {
+                const video = videoRef.current;
+                scanCanvas.width = video.videoWidth;
+                scanCanvas.height = video.videoHeight;
+                scanContext.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+                const pixels = scanContext.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
+                scannedValue = jsQR(pixels.data, pixels.width, pixels.height, {
+                  inversionAttempts: "dontInvert",
+                })?.data || "";
+              }
 
-              if (
-                barcodes.length > 0 &&
-                barcodes[0].rawValue
-              ) {
-                const scanned =
-                  barcodes[0].rawValue.trim();
+              if (scannedValue) {
+                const scanned = scannedValue.trim();
 
                 setToken(scanned);
 
@@ -493,6 +574,8 @@ export default function StudentAttendance() {
                 "QR detection error:",
                 scanError
               );
+            } finally {
+              scanInFlight = false;
             }
           },
           500
@@ -509,7 +592,7 @@ export default function StudentAttendance() {
         error?.name ===
           "NotAllowedError"
           ? "Camera permission was denied."
-          : "Unable to access the camera."
+          : error?.message || "Unable to access the camera."
       );
     }
   }
@@ -542,6 +625,100 @@ export default function StudentAttendance() {
     }
 
     setScannerActive(false);
+  }
+
+
+  async function startFaceCamera(registering = false) {
+    const registeringFace = registering || faceRegistrationMode;
+    setError("");
+    setNotice("");
+    if (!registeringFace && (!selectedSession || selectedSession.already_attended)) return;
+    if (!registeringFace && !faceStatus?.face_registered) {
+      setError("Your face is not registered. Please register your face first.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera access is unavailable. Use HTTPS or localhost and check browser support.");
+      return;
+    }
+    try {
+      await stopScanner();
+      faceStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      setFaceCameraActive(true);
+    } catch (cameraError) {
+      setFaceCameraActive(false);
+      setError(cameraError?.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access and try again."
+        : cameraError?.name === "NotFoundError"
+          ? "No camera was found on this device."
+          : "Unable to open the camera. Close other apps using it and retry.");
+    }
+  }
+
+
+  function stopFaceCamera() {
+    faceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    faceStreamRef.current = null;
+    if (faceVideoRef.current) faceVideoRef.current.srcObject = null;
+    setFaceCameraActive(false);
+  }
+
+
+  async function captureFaceAttendance() {
+    const video = faceVideoRef.current;
+    const canvas = faceCanvasRef.current;
+    if ((!faceRegistrationMode && !selectedSession) || !video?.videoWidth || !canvas) {
+      setError("Wait for the live camera preview before capturing your face.");
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setError("Camera capture is unavailable in this browser. Please retry or use QR attendance.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) {
+      setError("The camera frame could not be captured. Please retry.");
+      return;
+    }
+
+    setFaceSubmitting(true);
+    setError("");
+    setNotice("");
+    try {
+      const capture = new File([blob], faceRegistrationMode ? "my-face.jpg" : "attendance-face.jpg", { type: "image/jpeg" });
+      if (faceRegistrationMode) {
+        const result = await registerMyFace(capture);
+        setFaceStatus(result);
+        stopFaceCamera();
+        setFaceRegistrationMode(false);
+        setNotice("Face registered successfully. You can now mark attendance with face recognition.");
+        await loadData(true);
+        return;
+      }
+      let coordinates = null;
+      if (selectedSession.latitude != null && selectedSession.longitude != null) {
+        coordinates = await getCurrentLocation();
+      }
+      const sessionId = selectedSession.id;
+      const result = await submitStudentFaceAttendance(sessionId, capture, coordinates);
+      stopFaceCamera();
+      setNotice(result?.message || "Face attendance recorded successfully.");
+      await loadData(true);
+      setSelectedSession((current) => current && current.id === sessionId
+        ? { ...current, already_attended: true }
+        : current);
+    } catch (captureError) {
+      setError(getErrorMessage(captureError, "Face attendance could not be recorded."));
+    } finally {
+      setFaceSubmitting(false);
+    }
   }
 
 
@@ -610,6 +787,29 @@ export default function StudentAttendance() {
         )}
 
 
+        {!faceStatus?.face_registered && (
+          <section id="student-face-registration" className="student-face-attendance-card" aria-label="Register face">
+            <div className="student-face-attendance-heading">
+              <div>
+                <strong>Face registration</strong>
+                <p>Your face is not registered. Please register your face first.</p>
+              </div>
+              {faceCameraActive && faceRegistrationMode && <button type="button" className="student-secondary-button" onClick={() => { stopFaceCamera(); setFaceRegistrationMode(false); }} disabled={faceSubmitting}>Close camera</button>}
+            </div>
+            {faceCameraActive && faceRegistrationMode ? (
+              <div className="student-face-camera-layout">
+                <video ref={faceVideoRef} autoPlay muted playsInline />
+                <canvas ref={faceCanvasRef} hidden />
+                <button type="button" className="student-submit-button" onClick={captureFaceAttendance} disabled={faceSubmitting}>
+                  {faceSubmitting ? "Registering face..." : "Capture and Register Face"}
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="student-primary-button" onClick={() => { setFaceRegistrationMode(true); startFaceCamera(true); }} disabled={faceSubmitting || loading}>Register My Face</button>
+            )}
+          </section>
+        )}
+
         <section className="student-attendance-stats">
 
           <div className="student-attendance-stat highlight">
@@ -674,7 +874,7 @@ export default function StudentAttendance() {
         </section>
 
 
-        <section className="student-live-attendance">
+        <section id="student-live-session-list" className="student-live-attendance">
 
           <div className="student-section-heading">
 
@@ -848,7 +1048,7 @@ export default function StudentAttendance() {
 
                   <div>
                     <strong>
-                      Attendance already recorded
+                      Attendance already marked for this session.
                     </strong>
 
                     <span>
@@ -861,10 +1061,10 @@ export default function StudentAttendance() {
                 </div>
 
               ) : (
-
+                <>
                 <div className="student-verification-grid">
 
-                  <div className="student-scanner-card">
+                  <div className="student-scanner-card" id="student-qr-attendance">
 
                     <div className="student-scanner-title">
                       <strong>
@@ -1055,6 +1255,39 @@ export default function StudentAttendance() {
                   </div>
 
                 </div>
+
+                <section id="student-face-attendance" className="student-face-attendance-card" aria-label="Face recognition attendance">
+                  <div className="student-face-attendance-heading">
+                    <div>
+                      <strong>Face Recognition Attendance</strong>
+                      <p>Registration status: <b className={faceStatus?.face_registered ? "registered" : "not-registered"}>
+                        {faceStatus?.face_registered ? "Registered" : "Not Registered"}
+                      </b></p>
+                    </div>
+                    {faceCameraActive && <button type="button" className="student-secondary-button" onClick={stopFaceCamera} disabled={faceSubmitting}>Close camera</button>}
+                  </div>
+                  {faceCameraActive && !faceRegistrationMode ? (
+                    <div className="student-face-camera-layout">
+                      <video ref={faceVideoRef} autoPlay muted playsInline />
+                      <canvas ref={faceCanvasRef} hidden />
+                      <button type="button" className="student-submit-button" onClick={captureFaceAttendance} disabled={faceSubmitting}>
+                        {faceSubmitting ? "Verifying face…" : "Capture and Mark Attendance"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="student-face-attendance-actions">
+                      <p>{faceStatus?.face_registered
+                        ? "The backend verifies your live capture against your registered face and the active class session."
+                        : "Your face is not registered. Please register your face first."}</p>
+                      <button type="button" className="student-primary-button" onClick={startFaceCamera}
+                        disabled={!faceStatus?.face_registered || faceSubmitting || submitting || selectedSession.already_attended}>
+                        Open Camera
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                </>
 
               )}
 

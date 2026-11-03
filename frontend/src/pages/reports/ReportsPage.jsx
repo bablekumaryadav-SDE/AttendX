@@ -1,6 +1,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../../services/api";
+import { getApiErrorMessage } from "../../utils/errors";
 
 const normalize = (value) => String(value ?? "").toLowerCase();
 
@@ -9,9 +10,14 @@ function exportCsv(records) {
     ["id", "Record ID"],
     ["date", "Date"],
     ["student_id", "Student ID"],
+    ["student_name", "Student"],
     ["teacher_id", "Teacher ID"],
+    ["teacher_name", "Teacher"],
     ["subject_id", "Subject ID"],
+    ["subject_name", "Subject"],
     ["class_id", "Class ID"],
+    ["class_name", "Class"],
+    ["method", "Method"],
     ["status", "Status"],
     ["remarks", "Remarks"],
   ];
@@ -55,24 +61,65 @@ export default function ReportsPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [status, setStatus] = useState("all");
+  const [classId, setClassId] = useState("");
+  const [subjectId, setSubjectId] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [teacherId, setTeacherId] = useState("");
+  const [filterOptions, setFilterOptions] = useState({
+    classes: [], subjects: [], students: [], teachers: [],
+  });
   const [search, setSearch] = useState("");
 
   const loadRecords = useCallback(async () => {
+    if (fromDate && toDate && fromDate > toDate) {
+      setError("From date must not be after To date.");
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError("");
 
     try {
-      const response = await api.get("/attendance-records/");
-      setRecords(Array.isArray(response.data) ? response.data : []);
+      const response = await api.get("/analytics/records", {
+        params: {
+          date_from: fromDate || undefined,
+          date_to: toDate || undefined,
+          status: status === "all" ? undefined : status,
+          class_id: classId || undefined,
+          subject_id: subjectId || undefined,
+          student_id: studentId || undefined,
+          teacher_id: teacherId || undefined,
+        },
+      });
+      const rows = Array.isArray(response.data) ? response.data : [];
+      setRecords(rows);
+
+      if (
+        !fromDate && !toDate && status === "all" &&
+        !classId && !subjectId && !studentId && !teacherId
+      ) {
+        const uniqueBy = (key, labelKey) => [...new Map(
+          rows.map((row) => [String(row[key]), {
+            id: String(row[key]),
+            label: row[labelKey] || `${labelKey.replace("_name", "")} #${row[key]}`,
+          }])
+        ).values()];
+        setFilterOptions({
+          classes: uniqueBy("class_id", "class_name"),
+          subjects: uniqueBy("subject_id", "subject_name"),
+          students: uniqueBy("student_id", "student_name"),
+          teachers: uniqueBy("teacher_id", "teacher_name"),
+        });
+      }
     } catch (err) {
       setError(
-        err.response?.data?.detail ||
-        "Reports load nahi ho paaye. Backend/API permissions check karein."
+        getApiErrorMessage(err, "Reports load nahi ho paaye. Backend/API permissions check karein.")
       );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fromDate, toDate, status, classId, subjectId, studentId, teacherId]);
 
   useEffect(() => {
     loadRecords();
@@ -80,13 +127,6 @@ export default function ReportsPage() {
 
   const filtered = useMemo(() => {
     return records.filter((record) => {
-      const date = String(record.date || record.created_at || "").slice(0, 10);
-      const normalizedStatus = normalize(record.status);
-
-      if (fromDate && (!date || date < fromDate)) return false;
-      if (toDate && (!date || date > toDate)) return false;
-      if (status !== "all" && normalizedStatus !== status) return false;
-
       const haystack = [
         record.id,
         record.student_id,
@@ -94,12 +134,17 @@ export default function ReportsPage() {
         record.subject_id,
         record.class_id,
         record.status,
+        record.method,
+        record.student_name,
+        record.teacher_name,
+        record.subject_name,
+        record.class_name,
         record.remarks,
       ].map(normalize).join(" ");
 
       return haystack.includes(normalize(search).trim());
     });
-  }, [records, fromDate, toDate, status, search]);
+  }, [records, search]);
 
   const summary = useMemo(() => {
     const present = filtered.filter(
@@ -221,6 +266,34 @@ export default function ReportsPage() {
             <option value="late">Late</option>
           </select>
 
+          {filterOptions.classes.length > 0 && (
+            <select aria-label="Class filter" value={classId} onChange={(event) => setClassId(event.target.value)} style={{ padding: 10 }}>
+              <option value="">All classes</option>
+              {filterOptions.classes.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          )}
+
+          {filterOptions.subjects.length > 0 && (
+            <select aria-label="Subject filter" value={subjectId} onChange={(event) => setSubjectId(event.target.value)} style={{ padding: 10 }}>
+              <option value="">All subjects</option>
+              {filterOptions.subjects.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          )}
+
+          {filterOptions.students.length > 0 && (
+            <select aria-label="Student filter" value={studentId} onChange={(event) => setStudentId(event.target.value)} style={{ padding: 10 }}>
+              <option value="">All students</option>
+              {filterOptions.students.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          )}
+
+          {filterOptions.teachers.length > 0 && (
+            <select aria-label="Teacher filter" value={teacherId} onChange={(event) => setTeacherId(event.target.value)} style={{ padding: 10 }}>
+              <option value="">All teachers</option>
+              {filterOptions.teachers.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          )}
+
           <input
             aria-label="Search report records"
             placeholder="Search IDs, status, remarks..."
@@ -236,6 +309,10 @@ export default function ReportsPage() {
               setFromDate("");
               setToDate("");
               setStatus("all");
+              setClassId("");
+              setSubjectId("");
+              setStudentId("");
+              setTeacherId("");
               setSearch("");
             }}
           >
@@ -269,6 +346,7 @@ export default function ReportsPage() {
                     "Teacher",
                     "Subject",
                     "Class",
+                    "Method",
                     "Status",
                   ].map((heading) => (
                     <th key={heading} style={{
@@ -286,12 +364,13 @@ export default function ReportsPage() {
                   <tr key={record.id}>
                     <td style={{ padding: 12 }}>{record.id ?? "—"}</td>
                     <td style={{ padding: 12 }}>
-                      {String(record.date || record.created_at || "—")}
+                      {String(record.date || "—")}
                     </td>
-                    <td style={{ padding: 12 }}>{record.student_id ?? "—"}</td>
-                    <td style={{ padding: 12 }}>{record.teacher_id ?? "—"}</td>
-                    <td style={{ padding: 12 }}>{record.subject_id ?? "—"}</td>
-                    <td style={{ padding: 12 }}>{record.class_id ?? "—"}</td>
+                    <td style={{ padding: 12 }}>{record.student_name || record.student_id || "—"}</td>
+                    <td style={{ padding: 12 }}>{record.teacher_name || record.teacher_id || "—"}</td>
+                    <td style={{ padding: 12 }}>{record.subject_name || record.subject_id || "—"}</td>
+                    <td style={{ padding: 12 }}>{record.class_name || record.class_id || "—"}</td>
+                    <td style={{ padding: 12 }}>{record.method || "-"}</td>
                     <td style={{ padding: 12 }}>{record.status || "—"}</td>
                   </tr>
                 ))}

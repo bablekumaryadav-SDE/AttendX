@@ -20,6 +20,7 @@ import {
 
 import "./Teachers.css";
 
+import { getApiErrorMessage } from "../../../utils/errors.js";
 const emptyForm = {
   name: "",
   email: "",
@@ -48,11 +49,7 @@ function getInitials(name = "") {
 }
 
 function getErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.message ||
-    fallback
-  );
+  return getApiErrorMessage(error, fallback);
 }
 
 function Teachers() {

@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
-from app.models import TeacherAssignment
+from app.dependencies import get_current_admin
+from app.models import Class, Subject, Teacher, TeacherAssignment
 from app.schemas.assignment import (
     AssignmentCreate,
     AssignmentUpdate,
@@ -14,6 +14,33 @@ from app.schemas.assignment import (
 router = APIRouter()
 
 
+def _validate_references(db: Session, teacher_id: int, subject_id: int, class_id: int):
+    teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+    subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    class_ = db.query(Class).filter(Class.id == class_id).first()
+    if not teacher or not teacher.is_active:
+        raise HTTPException(status_code=422, detail="Select an active teacher.")
+    if not subject or not subject.is_active:
+        raise HTTPException(status_code=422, detail="Select an active subject.")
+    if not class_ or not class_.is_active:
+        raise HTTPException(status_code=422, detail="Select an active class.")
+
+
+def _duplicate_query(db: Session, teacher_id: int, subject_id: int, class_id: int,
+                     academic_year: str | None, semester: int | None, exclude_id: int | None = None):
+    query = db.query(TeacherAssignment).filter(
+        TeacherAssignment.teacher_id == teacher_id,
+        TeacherAssignment.subject_id == subject_id,
+        TeacherAssignment.class_id == class_id,
+        TeacherAssignment.academic_year == academic_year,
+        TeacherAssignment.semester == semester,
+        TeacherAssignment.is_active.is_(True),
+    )
+    if exclude_id is not None:
+        query = query.filter(TeacherAssignment.id != exclude_id)
+    return query.first()
+
+
 @router.post(
     "/",
     response_model=AssignmentResponse,
@@ -22,19 +49,11 @@ router = APIRouter()
 def create_assignment(
     data: AssignmentCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
-    existing = (
-        db.query(TeacherAssignment)
-        .filter(
-            TeacherAssignment.teacher_id == data.teacher_id,
-            TeacherAssignment.subject_id == data.subject_id,
-            TeacherAssignment.class_id == data.class_id,
-            TeacherAssignment.academic_year == data.academic_year,
-            TeacherAssignment.semester == data.semester,
-        )
-        .first()
-    )
+    _validate_references(db, data.teacher_id, data.subject_id, data.class_id)
+    existing = _duplicate_query(db, data.teacher_id, data.subject_id, data.class_id,
+                                data.academic_year, data.semester)
 
     if existing:
         raise HTTPException(
@@ -50,9 +69,13 @@ def create_assignment(
         semester=data.semester,
     )
 
-    db.add(assignment)
-    db.commit()
-    db.refresh(assignment)
+    try:
+        db.add(assignment)
+        db.commit()
+        db.refresh(assignment)
+    except Exception:
+        db.rollback()
+        raise
 
     return assignment
 
@@ -63,7 +86,7 @@ def create_assignment(
 )
 def get_assignments(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     return (
         db.query(TeacherAssignment)
@@ -79,7 +102,7 @@ def get_assignments(
 def get_assignment(
     assignment_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     assignment = (
         db.query(TeacherAssignment)
@@ -104,7 +127,7 @@ def update_assignment(
     assignment_id: int,
     data: AssignmentUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     assignment = (
         db.query(TeacherAssignment)
@@ -120,11 +143,27 @@ def update_assignment(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    values = {
+        "teacher_id": update_data.get("teacher_id", assignment.teacher_id),
+        "subject_id": update_data.get("subject_id", assignment.subject_id),
+        "class_id": update_data.get("class_id", assignment.class_id),
+        "academic_year": update_data.get("academic_year", assignment.academic_year),
+        "semester": update_data.get("semester", assignment.semester),
+    }
+    _validate_references(db, values["teacher_id"], values["subject_id"], values["class_id"])
+    if _duplicate_query(db, values["teacher_id"], values["subject_id"], values["class_id"],
+                        values["academic_year"], values["semester"], assignment.id):
+        raise HTTPException(status_code=409, detail="This active teacher assignment already exists.")
+
     for key, value in update_data.items():
         setattr(assignment, key, value)
 
-    db.commit()
-    db.refresh(assignment)
+    try:
+        db.commit()
+        db.refresh(assignment)
+    except Exception:
+        db.rollback()
+        raise
 
     return assignment
 
@@ -133,7 +172,7 @@ def update_assignment(
 def delete_assignment(
     assignment_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     assignment = (
         db.query(TeacherAssignment)
@@ -147,9 +186,13 @@ def delete_assignment(
             detail="Assignment not found",
         )
 
-    db.delete(assignment)
-    db.commit()
+    assignment.is_active = False
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return {
-        "message": "Teacher assignment deleted successfully"
+        "message": "Teacher assignment deactivated successfully"
     }
