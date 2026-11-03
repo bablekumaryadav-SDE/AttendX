@@ -1,6 +1,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import api from "../../services/api";
+import { getApiErrorMessage } from "../../utils/errors";
 import { useAuth } from "../../context/AuthContext";
 
 const formatDate = (value) => {
@@ -74,8 +75,7 @@ export default function AttendancePage() {
       setRecords(Array.isArray(response.data) ? response.data : []);
     } catch (err) {
       setError(
-        err.response?.data?.detail ||
-        "Attendance load nahi hui. Backend aur login permissions check karein."
+        getApiErrorMessage(err, "Attendance load nahi hui. Backend aur login permissions check karein.")
       );
     } finally {
       setLoading(false);

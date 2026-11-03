@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
-from app.models import Subject
+from app.dependencies import get_current_admin, get_current_user
+from app.models import Subject, TeacherAssignment
 from app.schemas.subject import SubjectCreate, SubjectUpdate, SubjectResponse
 
 
@@ -14,9 +14,13 @@ router = APIRouter()
 def create_subject(
     data: SubjectCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
-    existing = db.query(Subject).filter(Subject.code == data.code).first()
+    name = data.name.strip()
+    code = data.code.strip().upper()
+    if not name or not code:
+        raise HTTPException(status_code=422, detail="Subject name and code cannot be empty.")
+    existing = db.query(Subject).filter(Subject.code.ilike(code)).first()
 
     if existing:
         raise HTTPException(
@@ -25,14 +29,18 @@ def create_subject(
         )
 
     subject = Subject(
-        name=data.name,
-        code=data.code,
+        name=name,
+        code=code,
         department=data.department,
     )
 
-    db.add(subject)
-    db.commit()
-    db.refresh(subject)
+    try:
+        db.add(subject)
+        db.commit()
+        db.refresh(subject)
+    except Exception:
+        db.rollback()
+        raise
 
     return subject
 
@@ -67,7 +75,7 @@ def update_subject(
     subject_id: int,
     data: SubjectUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     subject = db.query(Subject).filter(Subject.id == subject_id).first()
 
@@ -79,11 +87,22 @@ def update_subject(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    for field in ("name", "code"):
+        if field in update_data and update_data[field] is None:
+            raise HTTPException(status_code=422, detail=f"Subject {field} cannot be empty.")
+        if field in update_data:
+            update_data[field] = update_data[field].strip()
+            if not update_data[field]:
+                raise HTTPException(status_code=422, detail=f"Subject {field} cannot be empty.")
+
+    if "code" in update_data and update_data["code"] is not None:
+        update_data["code"] = update_data["code"].strip().upper()
+
     if "code" in update_data:
         existing = (
             db.query(Subject)
             .filter(
-                Subject.code == update_data["code"],
+                Subject.code.ilike(update_data["code"]),
                 Subject.id != subject_id,
             )
             .first()
@@ -98,8 +117,12 @@ def update_subject(
     for key, value in update_data.items():
         setattr(subject, key, value)
 
-    db.commit()
-    db.refresh(subject)
+    try:
+        db.commit()
+        db.refresh(subject)
+    except Exception:
+        db.rollback()
+        raise
 
     return subject
 
@@ -108,7 +131,7 @@ def update_subject(
 def delete_subject(
     subject_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_admin),
 ):
     subject = db.query(Subject).filter(Subject.id == subject_id).first()
 
@@ -118,9 +141,18 @@ def delete_subject(
             detail="Subject not found",
         )
 
-    db.delete(subject)
-    db.commit()
+    subject.is_active = False
+    for assignment in db.query(TeacherAssignment).filter(
+        TeacherAssignment.subject_id == subject_id,
+        TeacherAssignment.is_active.is_(True),
+    ):
+        assignment.is_active = False
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return {
-        "message": "Subject deleted successfully"
+        "message": "Subject deactivated successfully"
     }

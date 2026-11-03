@@ -643,6 +643,70 @@
   line-height: 1.55;
 }
 
+.student-face-attendance-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #d9d6fe;
+  border-radius: 14px;
+  background: #fbfaff;
+}
+
+.student-face-attendance-heading,
+.student-face-attendance-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.student-face-attendance-heading strong {
+  color: #101828;
+}
+
+.student-face-attendance-heading p,
+.student-face-attendance-actions p {
+  margin: 6px 0 0;
+  color: #667085;
+  font-size: 12px;
+}
+
+.student-face-attendance-heading .registered {
+  color: #027a48;
+}
+
+.student-face-attendance-heading .not-registered {
+  color: #b54708;
+}
+
+.student-face-camera-layout {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.student-face-camera-layout video {
+  width: min(100%, 520px);
+  max-height: 360px;
+  border-radius: 12px;
+  background: #101828;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.student-face-camera-layout .student-submit-button {
+  width: min(100%, 520px);
+}
+
+@media (max-width: 640px) {
+  .student-face-attendance-heading,
+  .student-face-attendance-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .student-already-recorded {
   display: flex;
   align-items: center;

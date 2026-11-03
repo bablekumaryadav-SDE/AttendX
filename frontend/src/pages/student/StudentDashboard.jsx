@@ -2,8 +2,10 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import jsQR from "jsqr";
 
 import { Link } from "react-router-dom";
 
@@ -14,6 +16,9 @@ import {
   CalendarCheck2,
   CheckCircle2,
   Clock3,
+  Camera,
+  QrCode,
+  X,
   RefreshCw,
   ShieldAlert,
   TrendingUp,
@@ -23,10 +28,14 @@ import { useAuth } from "../../context/AuthContext";
 
 import {
   getActiveStudentSessions,
+  getMyFaceStatus,
   getMyAttendance,
+  submitStudentFaceAttendance,
+  submitStudentQrAttendance,
 } from "../../services/attendance";
 
 import "./StudentDashboard.css";
+import { getApiErrorMessage } from "../../utils/errors";
 
 function toList(value, keys = []) {
   if (Array.isArray(value)) return value;
@@ -41,11 +50,7 @@ function toList(value, keys = []) {
 }
 
 function getErrorMessage(error, fallback) {
-  const detail = error?.response?.data?.detail;
-
-  return typeof detail === "string"
-    ? detail
-    : error?.message || fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function formatDate(value) {
@@ -91,12 +96,35 @@ export default function StudentDashboard() {
 
   const [records, setRecords] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [faceStatus, setFaceStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [selectedAttendanceSessionId, setSelectedAttendanceSessionId] = useState("");
+  const [cameraMethod, setCameraMethod] = useState(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [faceCapture, setFaceCapture] = useState(null);
+  const [faceSubmitting, setFaceSubmitting] = useState(false);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const scanTimerRef = useRef(null);
+  const scanBusyRef = useRef(false);
+  const dashboardLoadRef = useRef(false);
+
+  const selectedAttendanceSession = sessions.find(
+    (session) => String(session.id) === String(selectedAttendanceSessionId)
+  ) || null;
+  const noEligibleSessionMessage = error.toLowerCase().includes("no active class enrollment")
+    ? "A class assignment is required before eligible sessions can be shown."
+    : "Waiting for your teacher to start attendance.";
 
   const loadDashboard = useCallback(async (silent = false) => {
+    if (dashboardLoadRef.current) return;
+    dashboardLoadRef.current = true;
+
     if (silent) {
       setRefreshing(true);
     } else {
@@ -104,68 +132,271 @@ export default function StudentDashboard() {
     }
 
     setError("");
+    try {
+      const [historyResult, sessionsResult, faceResult] =
+        await Promise.allSettled([
+          getMyAttendance(),
+          getActiveStudentSessions(),
+          getMyFaceStatus(),
+        ]);
 
-    const [historyResult, sessionsResult] =
-      await Promise.allSettled([
-        getMyAttendance(),
-        getActiveStudentSessions(),
-      ]);
+      if (historyResult.status === "fulfilled") {
+        setRecords(toList(historyResult.value, ["records", "items", "attendance"]));
+      }
 
-    if (historyResult.status === "fulfilled") {
-      setRecords(
-        toList(historyResult.value, [
-          "records",
-          "items",
-          "attendance",
-        ])
-      );
-    } else {
-      setRecords([]);
+      if (sessionsResult.status === "fulfilled") {
+        setSessions(toList(sessionsResult.value, ["sessions", "items", "active_sessions"]));
+      }
+
+      if (faceResult.status === "fulfilled") {
+        setFaceStatus(faceResult.value);
+      }
+
+      const errors = [];
+      if (historyResult.status === "rejected") {
+        errors.push(getErrorMessage(historyResult.reason, "Attendance history could not be loaded."));
+      }
+      if (sessionsResult.status === "rejected") {
+        errors.push(getErrorMessage(sessionsResult.reason, "Active sessions could not be loaded."));
+      }
+      if (faceResult.status === "rejected") {
+        errors.push(getErrorMessage(faceResult.reason, "Face registration status could not be checked."));
+      }
+      if (errors.length) setError(errors.join(" "));
+      setLastUpdated(new Date());
+    } catch (loadError) {
+      setError(getErrorMessage(loadError, "Student attendance data could not be loaded."));
+    } finally {
+      dashboardLoadRef.current = false;
+      setLoading(false);
+      setRefreshing(false);
     }
-
-    if (sessionsResult.status === "fulfilled") {
-      setSessions(
-        toList(sessionsResult.value, [
-          "sessions",
-          "items",
-          "active_sessions",
-        ])
-      );
-    } else {
-      setSessions([]);
-    }
-
-    const errors = [];
-
-    if (historyResult.status === "rejected") {
-      errors.push(
-        getErrorMessage(
-          historyResult.reason,
-          "Attendance history could not be loaded."
-        )
-      );
-    }
-
-    if (sessionsResult.status === "rejected") {
-      errors.push(
-        getErrorMessage(
-          sessionsResult.reason,
-          "Active sessions could not be loaded."
-        )
-      );
-    }
-
-    if (errors.length) {
-      setError(errors.join(" "));
-    }
-
-    setLastUpdated(new Date());
-    setLoading(false);
-    setRefreshing(false);
   }, []);
 
   useEffect(() => {
     loadDashboard();
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!selectedAttendanceSessionId && sessions.length) {
+      setSelectedAttendanceSessionId(String(sessions[0].id));
+    } else if (selectedAttendanceSessionId && !sessions.some((session) => String(session.id) === String(selectedAttendanceSessionId))) {
+      setSelectedAttendanceSessionId(sessions.length ? String(sessions[0].id) : "");
+    }
+  }, [sessions, selectedAttendanceSessionId]);
+
+  const stopCamera = useCallback(() => {
+    if (scanTimerRef.current) {
+      window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    }
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCameraActive(false);
+  }, []);
+
+  useEffect(() => () => {
+    if (scanTimerRef.current) window.clearInterval(scanTimerRef.current);
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  useEffect(() => () => {
+    if (faceCapture?.preview) URL.revokeObjectURL(faceCapture.preview);
+  }, [faceCapture?.preview]);
+
+  useEffect(() => {
+    if (!cameraActive || !videoRef.current || !cameraStreamRef.current) return undefined;
+    const video = videoRef.current;
+    video.srcObject = cameraStreamRef.current;
+    video.muted = true;
+    video.playsInline = true;
+    video.play().catch(() => setError("Camera preview could not start. Check browser camera permissions."));
+    return () => { video.srcObject = null; };
+  }, [cameraActive]);
+
+  const openCamera = async (method) => {
+    setError("");
+    setNotice("");
+    setFaceCapture(null);
+    setCameraMethod(method);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera access is unavailable. Open AttendX on HTTPS or localhost and check browser support.");
+      return;
+    }
+    try {
+      stopCamera();
+      cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: method === "qr" ? { ideal: "environment" } : { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      });
+      setCameraActive(true);
+    } catch (cameraError) {
+      setCameraActive(false);
+      setError(cameraError?.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access and try again."
+        : cameraError?.name === "NotFoundError"
+          ? "No camera was found on this device."
+          : "Unable to open the camera. Close other apps using it and retry.");
+    }
+  };
+
+  const getSessionCoordinates = async (session) => {
+    if (session?.latitude == null || session?.longitude == null) return null;
+    if (!navigator.geolocation) throw new Error("Location permission is required for this attendance session.");
+    return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude }),
+      (geoError) => reject(new Error(geoError.code === 1
+        ? "Location permission was denied."
+        : "Unable to get your current location.")),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    ));
+  };
+
+  const handleScannedQr = useCallback(async (rawValue) => {
+    if (scanBusyRef.current) return;
+    scanBusyRef.current = true;
+    stopCamera();
+    try {
+      let token = String(rawValue || "").trim();
+      if (!token.startsWith("AXQR.")) {
+        try { token = new URL(token, window.location.origin).searchParams.get("token") || token; } catch { /* Keep the scanned value for a readable validation failure. */ }
+      }
+      const tokenSessionId = token.match(/^AXQR\.(\d+)\./)?.[1];
+      const session = selectedAttendanceSession;
+      if (!session) throw new Error("No active attendance session matches this QR code.");
+      if (tokenSessionId && String(tokenSessionId) !== String(session.id)) {
+        throw new Error("This QR code belongs to a different session. Select that session before scanning.");
+      }
+      if (session.already_attended) throw new Error("Attendance already marked for this session.");
+      const coordinates = await getSessionCoordinates(session);
+      const result = await submitStudentQrAttendance(session.id, {
+        token,
+        latitude: coordinates?.latitude ?? null,
+        longitude: coordinates?.longitude ?? null,
+      });
+      setNotice(result?.message || "Attendance recorded successfully.");
+      setSessions((current) => current.map((item) => String(item.id) === String(session.id)
+        ? { ...item, already_attended: true }
+        : item));
+      await loadDashboard(true);
+    } catch (scanError) {
+      setError(getErrorMessage(scanError, "QR attendance could not be recorded."));
+    } finally {
+      scanBusyRef.current = false;
+    }
+  }, [sessions, selectedAttendanceSession, stopCamera, loadDashboard]);
+
+  useEffect(() => {
+    if (!cameraActive || cameraMethod !== "qr" || !videoRef.current) return undefined;
+    let active = true;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d", { willReadFrequently: true });
+    if (!canvas || !context) {
+      setError("QR scanning could not access the camera frame. Close the scanner and retry.");
+      stopCamera();
+      return undefined;
+    }
+    const scan = async () => {
+      if (!active || scanBusyRef.current || !videoRef.current || videoRef.current.readyState < 2) return;
+      scanBusyRef.current = true;
+      let decodedValue = "";
+      try {
+        const video = videoRef.current;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const frame = context.getImageData(0, 0, canvas.width, canvas.height);
+        decodedValue = jsQR(frame.data, frame.width, frame.height, {
+          inversionAttempts: "attemptBoth",
+        })?.data || "";
+      } catch (scanError) {
+        console.warn("QR frame decode failed:", scanError);
+      } finally {
+        scanBusyRef.current = false;
+      }
+      if (active && decodedValue) await handleScannedQr(decodedValue);
+    };
+    scanTimerRef.current = window.setInterval(scan, 450);
+    return () => {
+      active = false;
+      if (scanTimerRef.current) window.clearInterval(scanTimerRef.current);
+      scanTimerRef.current = null;
+    };
+  }, [cameraActive, cameraMethod, handleScannedQr, stopCamera]);
+
+  const captureFace = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!video?.videoWidth || !canvas || !context) {
+      setError("Wait for the live camera preview before capturing your face.");
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!blob) {
+      setError("The camera frame could not be captured. Please retry.");
+      return;
+    }
+    setFaceCapture({
+      file: new File([blob], "attendance-face.jpg", { type: "image/jpeg" }),
+      preview: URL.createObjectURL(blob),
+    });
+    stopCamera();
+    setError("");
+    setNotice("Face captured. Verify it against the selected active session.");
+  };
+
+  const verifyFace = async () => {
+    if (!selectedAttendanceSession || !faceCapture?.file) return;
+    if (selectedAttendanceSession.already_attended) {
+      setError("Attendance already marked for this session.");
+      return;
+    }
+    setFaceSubmitting(true);
+    setError("");
+    setNotice("");
+    try {
+      const coordinates = await getSessionCoordinates(selectedAttendanceSession);
+      const result = await submitStudentFaceAttendance(selectedAttendanceSession.id, faceCapture.file, coordinates);
+      setNotice(result?.message || "Face recognized successfully. Your attendance has been marked.");
+      if (faceCapture.preview) URL.revokeObjectURL(faceCapture.preview);
+      setFaceCapture(null);
+      setSessions((current) => current.map((item) => String(item.id) === String(selectedAttendanceSession.id)
+        ? { ...item, already_attended: true }
+        : item));
+      await loadDashboard(true);
+    } catch (faceError) {
+      setError(getErrorMessage(faceError, "Face attendance could not be recorded."));
+    } finally {
+      setFaceSubmitting(false);
+    }
+  };
+
+  const closeCameraDialog = () => {
+    stopCamera();
+    setCameraMethod(null);
+    if (faceCapture?.preview) URL.revokeObjectURL(faceCapture.preview);
+    setFaceCapture(null);
+  };
+
+  // Teacher session creation and attendance events should reach the
+  // student dashboard without requiring a manual page refresh.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadDashboard(true);
+      }
+    }, 7000);
+
+    return () => window.clearInterval(timer);
   }, [loadDashboard]);
 
   const summary = useMemo(() => {
@@ -410,14 +641,162 @@ export default function StudentDashboard() {
           </div>
         )}
 
+      <section className="sd-face-status sd-panel">
+        <div className="sd-face-status-copy">
+          <span className="sd-panel-kicker">BIOMETRIC PROFILE</span>
+          <h3>Face registration</h3>
+          <p>{faceStatus?.face_registered ? "Your registered face reference is ready for verification." : "Your face is not registered. Please register your face first."}</p>
+        </div>
+        <span className={`sd-session-status ${faceStatus?.face_registered ? "done" : "open"}`}>
+          {loading ? "Checking…" : faceStatus?.status === "unavailable" ? "Unavailable" : faceStatus?.face_registered ? "Registered" : "Not registered"}
+        </span>
+        {faceStatus?.face_registered ? (
+          <Link to="/student/attendance">Open attendance <ArrowRight size={14} /></Link>
+        ) : (
+          <Link to="/student/attendance" state={{ method: "register-face" }}>Register My Face <ArrowRight size={14} /></Link>
+        )}
+      </section>
+
+      <section className="sd-attendance-methods" aria-labelledby="sd-attendance-methods-title">
+        <div className="sd-attendance-methods-heading">
+          <div>
+            <span className="sd-panel-kicker">ATTENDANCE OPTIONS</span>
+            <h3 id="sd-attendance-methods-title">MARK YOUR ATTENDANCE</h3>
+            <p>Choose a method, then select your teacher’s active session.</p>
+          </div>
+        </div>
+        <div className="sd-attendance-method-grid">
+          <article className="sd-attendance-method-card">
+            <span className="sd-attendance-method-icon qr"><QrCode size={22} /></span>
+            <div>
+              <h4>Scan Teacher QR</h4>
+              <p>Scan the dynamic QR code displayed by your teacher.</p>
+            </div>
+            <select aria-label="Select session for QR attendance" value={selectedAttendanceSessionId} onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}>
+              <option value="">{sessions.length ? "Select an active session" : "No active sessions"}</option>
+              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
+            </select>
+            {selectedAttendanceSession ? (
+              <div className="sd-attendance-session-summary">
+                <strong>{selectedAttendanceSession.subject_name || "Subject"} · {selectedAttendanceSession.class_name || "Class"}</strong>
+                <span>Teacher: {selectedAttendanceSession.teacher_name || "Assigned teacher"}</span>
+                <span>Starts {formatDate(selectedAttendanceSession.starts_at)} at {formatTime(selectedAttendanceSession.starts_at)}</span>
+                <span className="active">{statusName(selectedAttendanceSession.status).toUpperCase()}</span>
+              </div>
+            ) : (
+              <div className="sd-attendance-session-summary waiting">{noEligibleSessionMessage}</div>
+            )}
+            <button type="button" onClick={() => openCamera("qr")} disabled={!selectedAttendanceSession || Boolean(selectedAttendanceSession?.already_attended)}>
+              Open QR Scanner <ArrowRight size={15} />
+            </button>
+          </article>
+          <article className="sd-attendance-method-card">
+            <span className="sd-attendance-method-icon face"><Camera size={22} /></span>
+            <div>
+              <h4>Face Recognition</h4>
+              <p>Face status: <strong>{loading ? "Checking…" : faceStatus?.status === "unavailable" ? "Unavailable" : faceStatus?.face_registered ? "Registered" : "Not Registered"}</strong></p>
+            </div>
+            <select aria-label="Select session for face attendance" value={selectedAttendanceSessionId} onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}>
+              <option value="">{sessions.length ? "Select an active session" : "No active sessions"}</option>
+              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
+            </select>
+            {selectedAttendanceSession ? (
+              <div className="sd-attendance-session-summary">
+                <strong>{selectedAttendanceSession.subject_name || "Subject"} · {selectedAttendanceSession.class_name || "Class"}</strong>
+                <span>Teacher: {selectedAttendanceSession.teacher_name || "Assigned teacher"}</span>
+                <span>Starts {formatDate(selectedAttendanceSession.starts_at)} at {formatTime(selectedAttendanceSession.starts_at)}</span>
+                <span className="active">{statusName(selectedAttendanceSession.status).toUpperCase()}</span>
+              </div>
+            ) : (
+              <div className="sd-attendance-session-summary waiting">{noEligibleSessionMessage}</div>
+            )}
+            {faceStatus?.face_registered ? (
+              <button type="button" onClick={() => openCamera("face")} disabled={!selectedAttendanceSession || Boolean(selectedAttendanceSession?.already_attended)}>
+                Open Face Camera <ArrowRight size={15} />
+              </button>
+            ) : (
+              <Link to="/student/attendance" state={{ method: "register-face" }}>
+                Register My Face <ArrowRight size={15} />
+              </Link>
+            )}
+          </article>
+        </div>
+        {!loading && sessions.length === 0 && !error && (
+          <p className="sd-no-active-attendance">No active attendance session. Please wait for your teacher to start attendance.</p>
+        )}
+      </section>
+
+      {cameraMethod && (
+        <div className="sd-camera-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeCameraDialog(); }}>
+          <section className="sd-camera-dialog" role="dialog" aria-modal="true" aria-labelledby="sd-camera-title">
+            <header>
+              <div>
+                <span className="sd-panel-kicker">ATTENDANCE VERIFICATION</span>
+                <h3 id="sd-camera-title">{cameraMethod === "qr" ? "Scan Teacher’s QR Code" : "Face Recognition Attendance"}</h3>
+              </div>
+              <button type="button" className="sd-camera-close" onClick={closeCameraDialog} aria-label="Close camera"><X size={19} /></button>
+            </header>
+            {error && <p className="sd-camera-inline-message" role="alert">{error}</p>}
+            {notice && <p className="sd-camera-success-message" role="status">{notice}</p>}
+            <label className="sd-camera-session-select">
+              Active session
+              <select value={selectedAttendanceSessionId} onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}>
+                <option value="">{sessions.length ? "Select an active session" : "No active sessions"}</option>
+                {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name}</option>)}
+              </select>
+            </label>
+            {!selectedAttendanceSession && (
+              <p className="sd-no-active-attendance">No active attendance session. Please wait for your teacher to start attendance. Camera preview is available; attendance submission is disabled.</p>
+            )}
+            {selectedAttendanceSession?.already_attended && (
+              <p className="sd-camera-inline-message">Attendance already marked for this session.</p>
+            )}
+            <div className="sd-camera-preview">
+              {cameraActive ? (
+                <video ref={videoRef} autoPlay muted playsInline />
+              ) : cameraMethod === "face" && faceCapture?.preview ? (
+                <img src={faceCapture.preview} alt="Captured face preview" />
+              ) : (
+                <div>{cameraMethod === "qr" ? <QrCode size={30} /> : <Camera size={30} />}<span>{cameraMethod === "qr" ? "QR camera preview" : "Face camera preview"}</span></div>
+              )}
+              <canvas ref={canvasRef} hidden />
+            </div>
+            <div className="sd-camera-controls">
+              {cameraActive ? (
+                cameraMethod === "qr" ? (
+                  <button type="button" className="secondary" onClick={stopCamera}>Stop Scanner</button>
+                ) : (
+                  <button type="button" className="primary" onClick={captureFace}>Capture Face</button>
+                )
+              ) : cameraMethod === "qr" ? (
+                <button type="button" className="primary" onClick={() => openCamera("qr")}>Open QR Scanner</button>
+              ) : faceCapture ? (
+                <>
+                  <button type="button" className="secondary" onClick={() => { setFaceCapture(null); openCamera("face"); }}>Retake</button>
+                  <button type="button" className="primary" onClick={verifyFace} disabled={!selectedAttendanceSession || selectedAttendanceSession.already_attended || faceSubmitting || !faceCapture?.file}>
+                    {faceSubmitting ? "Verifying face…" : "Verify Face and Mark Attendance"}
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="primary" onClick={() => openCamera("face")}>Open Face Camera</button>
+              )}
+            </div>
+            {cameraMethod === "face" && !faceStatus?.face_registered && (
+              <p className="sd-camera-inline-message">Your face is not registered. Please register your face first. <Link to="/student/attendance" state={{ method: "register-face" }} onClick={closeCameraDialog}>Register My Face</Link></p>
+            )}
+            {!selectedAttendanceSession && <button className="sd-camera-disabled-action" type="button" disabled>{cameraMethod === "qr" ? "Mark Attendance" : "Verify Face"} — select an active session first</button>}
+          </section>
+        </div>
+      )}
+
       <section className="sd-main-grid">
         <article className="sd-panel sd-sessions-panel">
           <div className="sd-panel-heading">
             <div>
               <span className="sd-panel-kicker">
-                RIGHT NOW
+                LIVE ATTENDANCE
               </span>
-              <h3>Available attendance sessions</h3>
+              <h3>MARK YOUR ATTENDANCE</h3>
             </div>
 
             <Link to="/student/attendance">
@@ -438,10 +817,7 @@ export default function StudentDashboard() {
 
               <strong>No active sessions right now</strong>
 
-              <p>
-                When a teacher opens a session,
-                it will appear here.
-              </p>
+              <p>No active attendance session. Please wait for your teacher to start attendance.</p>
             </div>
           ) : (
             <div className="sd-session-list">
@@ -497,13 +873,34 @@ export default function StudentDashboard() {
                       {alreadyAttended ? "Marked" : "Open"}
                     </span>
 
-                    <Link
-                      className="sd-session-action"
-                      to="/student/attendance"
-                      aria-label={`Open attendance for ${title}`}
-                    >
-                      <ArrowRight size={17} />
-                    </Link>
+                    <div className="sd-session-actions" aria-label={`Attendance options for ${title}`}>
+                      {alreadyAttended ? (
+                        <Link
+                          className="sd-session-option recorded"
+                          to="/student/attendance"
+                          state={{ sessionId: session.id }}
+                        >
+                          View record
+                        </Link>
+                      ) : (
+                        <>
+                          <Link
+                            className="sd-session-option face"
+                            to="/student/attendance"
+                            state={{ sessionId: session.id, method: "face" }}
+                          >
+                            Open Camera - Face Recognition
+                          </Link>
+                          <Link
+                            className="sd-session-option qr"
+                            to="/student/attendance"
+                            state={{ sessionId: session.id, method: "qr" }}
+                          >
+                            Scan QR Code
+                          </Link>
+                        </>
+                      )}
+                    </div>
                   </div>
                 );
               })}

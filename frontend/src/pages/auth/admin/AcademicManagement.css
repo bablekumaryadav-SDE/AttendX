@@ -53,6 +53,15 @@
   margin-bottom: 15px;
 }
 
+.academic-success { padding: 12px; margin-bottom: 15px; border: 1px solid #a6f4c5; border-radius: 10px; color: #067647; background: #ecfdf3; }
+.academic-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; padding: 16px; border: 1px solid #eaecf0; border-radius: 14px; background: #fff; }
+.academic-form strong { flex-basis: 100%; }
+.academic-form input, .academic-form select { min-width: 150px; flex: 1 1 160px; padding: 10px 11px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; }
+.academic-form button, .academic-table td button { padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; cursor: pointer; font-weight: 650; }
+.academic-form button:not(.academic-cancel) { color: #fff; border-color: #172033; background: #172033; }
+.academic-table td button { margin-right: 6px; }
+.academic-cancel { color: #475467; }
+
 .academic-tabs {
   display: flex;
   gap: 8px;

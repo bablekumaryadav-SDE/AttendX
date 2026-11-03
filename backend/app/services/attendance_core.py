@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import math
 import secrets
 from datetime import datetime, timezone
@@ -63,6 +64,21 @@ def verify_qr_token(token: str, session_id: int, secret: str):
         return False
 
 
+def verify_current_qr_token(token: str, session_id: int, secret: str, expires_at):
+    """Verify signature and require this token to be the currently published QR."""
+    if not expires_at or not verify_qr_token(token, session_id, secret):
+        return False
+    try:
+        prefix, token_session, timestamp, _signature = token.split(".")
+        return (
+            prefix == "AXQR"
+            and int(token_session) == int(session_id)
+            and int(timestamp) == int(expires_at.timestamp())
+        )
+    except (AttributeError, ValueError, TypeError):
+        return False
+
+
 def haversine_m(
     lat1,
     lon1,
@@ -111,6 +127,7 @@ def get_teacher_for_user(db, user_id: int):
             JOIN users u
               ON LOWER(u.email) = LOWER(t.email)
             WHERE u.id = :user_id
+              AND t.is_active = TRUE
             LIMIT 1
             """
         ),
@@ -178,8 +195,6 @@ def log_audit(
             "action": action,
             "entity_type": entity_type,
             "entity_id": entity_id,
-            "metadata": "{}"
-            if metadata is None
-            else str(metadata),
+            "metadata": json.dumps(metadata or {}, separators=(",", ":"), default=str),
         },
     )

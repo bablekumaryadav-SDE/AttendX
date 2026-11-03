@@ -4,6 +4,7 @@ import React, {
   useState,
   useCallback,
 } from "react";
+import { Bell } from "lucide-react";
 
 import {
   NavLink,
@@ -42,6 +43,7 @@ function DashboardLayout() {
   const navigation = useMemo(() => {
     if (role === "admin") {
       return [
+        { label: "Home", path: "/", icon: "⌂" },
         {
           label: "Overview",
           path: "/admin",
@@ -68,6 +70,11 @@ function DashboardLayout() {
           icon: "▦",
         },
         {
+          label: "Subjects & Assignments",
+          path: "/admin/subjects",
+          icon: "S",
+        },
+        {
           label: "Reports",
           path: "/admin/reports",
           icon: "▤",
@@ -77,6 +84,7 @@ function DashboardLayout() {
 
     if (role === "teacher") {
       return [
+        { label: "Home", path: "/", icon: "⌂" },
         {
           label: "Overview",
           path: "/teacher",
@@ -97,6 +105,7 @@ function DashboardLayout() {
 
     if (role === "student") {
       return [
+        { label: "Home", path: "/", icon: "⌂" },
         {
           label: "Overview",
           path: "/student",
@@ -180,7 +189,7 @@ function DashboardLayout() {
       await logout();
       navigate("/login", { replace: true });
     } catch (error) {
-      console.error("Logout failed:", error);
+      // Keep authentication headers and request metadata out of browser logs.
     } finally {
       setMobileMenuOpen(false);
       setLoggingOut(false);
@@ -253,6 +262,7 @@ function DashboardLayout() {
               key={item.path}
               to={item.path}
               end={
+                item.path === "/" ||
                 item.label === "Overview" ||
                 item.path === `/${role}`
               }
@@ -340,12 +350,9 @@ function DashboardLayout() {
               className="notification-button"
               aria-label="Notifications"
               title="Notifications"
-              onClick={() =>
-                navigate(`/${role}/notifications`)
-              }
+              onClick={() => navigate(`/${role}/notifications`)}
             >
-              ♢
-              <span className="notification-dot" />
+              <Bell size={17} />
             </button>
 
             <div className="header-divider" />

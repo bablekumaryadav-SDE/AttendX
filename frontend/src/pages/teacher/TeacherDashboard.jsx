@@ -31,6 +31,7 @@ import {
 } from "../../services/dashboard";
 
 import "./TeacherDashboard.css";
+import { getApiErrorMessage } from "../../utils/errors";
 
 function asArray(value, keys = []) {
   if (Array.isArray(value)) return value;
@@ -45,11 +46,7 @@ function asArray(value, keys = []) {
 }
 
 function getErrorMessage(error, fallback) {
-  const detail = error?.response?.data?.detail;
-
-  return typeof detail === "string"
-    ? detail
-    : error?.message || fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function formatDateTime(value) {
@@ -161,6 +158,18 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     loadDashboard();
+  }, [loadDashboard]);
+
+  // Keep newly started sessions and live aggregate counts current without
+  // polling in a background tab.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadDashboard(true);
+      }
+    }, 15000);
+
+    return () => window.clearInterval(timer);
   }, [loadDashboard]);
 
   const assignments = useMemo(

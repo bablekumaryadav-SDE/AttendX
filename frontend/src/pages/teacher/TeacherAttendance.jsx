@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { QRCodeSVG } from "qrcode.react";
 
 import {
   closeAttendanceSession,
@@ -14,10 +15,8 @@ import {
   refreshSessionQr,
 } from "../../services/attendance";
 
-import {
-  getClasses,
-  getSubjects,
-} from "../../services/teachers";
+import { getTeacherDashboard } from "../../services/dashboard";
+import { getApiErrorMessage } from "../../utils/errors";
 
 import "./TeacherAttendance.css";
 
@@ -53,11 +52,7 @@ function getDefaultForm() {
 }
 
 function getErrorMessage(error, fallback) {
-  return (
-    error?.response?.data?.detail ||
-    error?.message ||
-    fallback
-  );
+  return getApiErrorMessage(error, fallback);
 }
 
 function formatDateTime(value) {
@@ -98,8 +93,7 @@ function formatTime(value) {
 
 export default function TeacherAttendance() {
   const [sessions, setSessions] = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [classes, setClasses] = useState([]);
+  const [assignments, setAssignments] = useState([]);
 
   const [form, setForm] = useState(
     getDefaultForm
@@ -125,48 +119,59 @@ export default function TeacherAttendance() {
      ======================================================= */
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      setLoading(true);
-      setError("");
-
-      const [
-        sessionData,
-        subjectData,
-        classData,
-      ] = await Promise.all([
+      const [sessionResult, teacherResult] = await Promise.allSettled([
         getAttendanceSessions(),
-        getSubjects(),
-        getClasses(),
+        getTeacherDashboard(),
       ]);
 
-      setSessions(
-        Array.isArray(sessionData)
-          ? sessionData
-          : []
-      );
+      if (sessionResult.status === "fulfilled") {
+        const data = sessionResult.value;
+        const rows = Array.isArray(data) ? data : Array.isArray(data?.sessions) ? data.sessions : [];
+        setSessions(rows.filter((item) => item && (item.id != null || item.session_id != null)));
+      }
 
-      setSubjects(
-        Array.isArray(subjectData)
-          ? subjectData
-          : []
-      );
+      if (teacherResult.status === "fulfilled") {
+        setAssignments(Array.isArray(teacherResult.value?.assignments) ? teacherResult.value.assignments : []);
+      }
 
-      setClasses(
-        Array.isArray(classData)
-          ? classData
-          : []
-      );
+      const failures = [];
+      if (sessionResult.status === "rejected") {
+        failures.push(getErrorMessage(sessionResult.reason, "Attendance sessions could not be loaded."));
+      }
+      if (teacherResult.status === "rejected") {
+        failures.push(getErrorMessage(teacherResult.reason, "Teacher assignments could not be loaded."));
+      }
+      if (failures.length) setError(failures.join(" "));
     } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "Unable to load attendance workspace."
-        )
-      );
+      setError(getErrorMessage(err, "Teacher attendance could not be loaded."));
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const subjects = useMemo(() => {
+    const unique = new Map();
+    assignments.forEach((assignment) => {
+      unique.set(assignment.subject_id, {
+        id: assignment.subject_id,
+        name: assignment.subject_name,
+      });
+    });
+    return [...unique.values()];
+  }, [assignments]);
+
+  const classes = useMemo(() => assignments
+    .filter((assignment) => String(assignment.subject_id) === String(form.subject_id))
+    .map((assignment) => ({
+      id: assignment.class_id,
+      name: assignment.class_name,
+      section: assignment.section,
+    }))
+    .filter((classItem, index, list) => list.findIndex((item) => item.id === classItem.id) === index),
+  [assignments, form.subject_id]);
 
   /* =======================================================
      INITIAL LOAD
@@ -267,6 +272,7 @@ export default function TeacherAttendance() {
 
   const handleCreate = async (event) => {
     event.preventDefault();
+    if (saving) return;
 
     setError("");
     setNotice("");
@@ -281,9 +287,9 @@ export default function TeacherAttendance() {
       return;
     }
 
-    if (!form.title.trim()) {
+    if (form.title.trim().length < 2) {
       setError(
-        "Please enter an attendance session title."
+        "Session title must contain at least 2 characters."
       );
       return;
     }
@@ -364,27 +370,35 @@ export default function TeacherAttendance() {
           payload
         );
 
-      setNotice(
-        "Attendance session created. Dynamic QR is ready."
-      );
+      const session = created?.session || created;
+      const sessionId = session?.id ?? session?.session_id;
+      if (!sessionId || !Number.isFinite(Number(sessionId))) {
+        throw new Error("The server created a response without a valid session ID. Refresh the session list before retrying.");
+      }
+      const usableSession = { ...session, id: Number(sessionId) };
 
-      setSelectedSession(created);
+      setNotice("Attendance session created. Loading its QR code…");
+      setSelectedSession(usableSession);
+      setSessions((current) => [
+        usableSession,
+        ...current.filter((item) => Number(item.id ?? item.session_id) !== Number(sessionId)),
+      ]);
 
       setLiveRows([]);
+      setQr(null);
 
       setForm(getDefaultForm());
 
-      await load();
+      void load();
 
-      /*
-       * Generate first dynamic QR.
-       */
-      const qrData =
-        await getSessionQr(
-          created.id
-        );
-
-      setQr(qrData);
+      try {
+        const qrData = await getSessionQr(usableSession.id);
+        setQr(qrData);
+        setNotice("Attendance session created. Dynamic QR is ready.");
+      } catch (qrError) {
+        setError(`Session created, but its QR could not be loaded. Use Refresh QR to retry. ${getErrorMessage(qrError, "")}`.trim());
+        setNotice("Attendance session is active.");
+      }
     } catch (err) {
       setError(
         getErrorMessage(
@@ -692,10 +706,11 @@ export default function TeacherAttendance() {
                   form.subject_id
                 }
                 onChange={(event) =>
-                  updateForm(
-                    "subject_id",
-                    event.target.value
-                  )
+                  setForm((current) => ({
+                    ...current,
+                    subject_id: event.target.value,
+                    class_id: "",
+                  }))
                 }
                 required
               >
@@ -715,9 +730,6 @@ export default function TeacherAttendance() {
                     >
                       {subject.name}
 
-                      {subject.code
-                        ? ` (${subject.code})`
-                        : ""}
                     </option>
                   )
                 )}
@@ -742,6 +754,7 @@ export default function TeacherAttendance() {
                   )
                 }
                 required
+                disabled={!form.subject_id || classes.length === 0}
               >
                 <option value="">
                   Select class
@@ -787,7 +800,8 @@ export default function TeacherAttendance() {
                   )
                 }
                 placeholder="e.g. Data Structures — Lecture 12"
-                maxLength={255}
+                minLength={2}
+                maxLength={180}
                 required
               />
             </label>
@@ -1074,8 +1088,19 @@ export default function TeacherAttendance() {
 
             <div className="qr-panel">
               <div className="qr-placeholder">
-                <div className="qr-pattern">
-                  ▦
+                <div className="qr-code-surface">
+                  {qr?.token ? (
+                    <QRCodeSVG
+                      value={qr.token}
+                      size={160}
+                      bgColor="#ffffff"
+                      fgColor="#101828"
+                      level="M"
+                      title="Dynamic attendance QR code"
+                    />
+                  ) : (
+                    <span>QR token unavailable</span>
+                  )}
                 </div>
 
                 <strong>

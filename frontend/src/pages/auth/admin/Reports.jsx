@@ -12,6 +12,7 @@ import {
 } from "../../services/dashboard";
 import "./Reports.css";
 
+import { getApiErrorMessage } from "../../utils/errors.js";
 function csvDownload(rows) {
   if (!rows.length) return;
 
@@ -97,8 +98,7 @@ export default function Reports() {
       );
     } catch (e) {
       setError(
-        e?.response?.data?.detail ||
-          "Unable to load report data."
+        getApiErrorMessage(e, "Unable to load report data.")
       );
     } finally {
       setLoading(false);

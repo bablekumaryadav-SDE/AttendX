@@ -89,3 +89,28 @@ export async function deleteSubject(id) {
   const response = await api.delete(`/subjects/${id}`);
   return response.data;
 }
+
+export async function getAssignments() {
+  const response = await api.get("/assignments/");
+  return response.data;
+}
+
+export async function createAssignment(payload) {
+  const response = await api.post("/assignments/", payload);
+  return response.data;
+}
+
+export async function updateAssignment(id, payload) {
+  const response = await api.put(`/assignments/${id}`, payload);
+  return response.data;
+}
+
+export async function deactivateAssignment(id) {
+  const response = await api.delete(`/assignments/${id}`);
+  return response.data;
+}
+
+export async function activateAssignment(id) {
+  const response = await api.put(`/assignments/${id}`, { is_active: true });
+  return response.data;
+}

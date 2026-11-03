@@ -1,24 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getStudents } from "../../services/students";
-import { getTeachers } from "../../services/teachers";
-import { getAttendanceSessions } from "../../services/attendance";
+import { getStudents } from "../../../services/students";
+import { getTeachers } from "../../../services/teachers";
+import { getAttendanceSessions } from "../../../services/attendance";
 import {
+  getAdminDashboard,
   getAnalyticsOverview,
   getLowAttendance,
-} from "../../services/dashboard";
+} from "../../../services/dashboard";
 import "./AdminDashboard.css";
 
+import { getApiErrorMessage } from "../../../utils/errors.js";
 const number = (value) => Number(value || 0);
 
-const errorText = (error, fallback) =>
-  error?.response?.data?.detail || fallback;
+const errorText = (error, fallback) => getApiErrorMessage(error, fallback);
 
 export default function AdminDashboard() {
   const [students, setStudents] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [overview, setOverview] = useState(null);
+  const [dashboardStats, setDashboardStats] = useState(null);
   const [lowAttendance, setLowAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -31,6 +33,7 @@ export default function AdminDashboard() {
       getStudents(),
       getTeachers(),
       getAttendanceSessions(),
+      getAdminDashboard(),
       getAnalyticsOverview(),
       getLowAttendance(75),
     ]);
@@ -39,6 +42,7 @@ export default function AdminDashboard() {
       studentResult,
       teacherResult,
       sessionResult,
+      dashboardResult,
       overviewResult,
       lowResult,
     ] = results;
@@ -63,6 +67,10 @@ export default function AdminDashboard() {
 
     if (overviewResult.status === "fulfilled") {
       setOverview(overviewResult.value || null);
+    }
+
+    if (dashboardResult.status === "fulfilled") {
+      setDashboardStats(dashboardResult.value || null);
     }
 
     if (lowResult.status === "fulfilled") {
@@ -154,6 +162,19 @@ export default function AdminDashboard() {
         </article>
 
         <article className="ad-stat">
+          <span>Face registered</span>
+
+          <strong>
+            {number(
+              dashboardStats?.face_registered_count ??
+                students.filter((item) => item.face_registered === true).length
+            )}
+          </strong>
+
+          <small>Active students with a valid face embedding</small>
+        </article>
+
+        <article className="ad-stat">
           <span>Attendance sessions</span>
 
           <strong>
@@ -195,6 +216,10 @@ export default function AdminDashboard() {
 
             <Link to="/admin/classes">
               Classes & subjects <b>→</b>
+            </Link>
+
+            <Link to="/admin/subjects">
+              Subjects & assignments <b>→</b>
             </Link>
 
             <Link to="/admin/attendance">

@@ -1,4 +1,18 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Boolean
+import json
+import math
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -26,10 +40,20 @@ class Student(Base):
 
     @property
     def face_registered(self) -> bool:
-        return bool(
-            self.face_registration
-            and self.face_registration.status == "registered"
-        )
+        if not self.is_active or not self.face_registration:
+            return False
+        if self.face_registration.status != "registered":
+            return False
+        try:
+            values = json.loads(self.face_registration.embedding_json or "null")
+            if not isinstance(values, list) or len(values) != 128:
+                return False
+            if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in values):
+                return False
+            norm = math.sqrt(sum(value * value for value in values))
+            return 0.999 <= norm <= 1.001
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
 
     @property
     def face_registered_at(self):
@@ -40,12 +64,8 @@ class Student(Base):
 
 class FaceEmbedding(Base):
     """
-    Stores the student's registered reference face image.
-
-    The image is kept in PostgreSQL so the future recognition service can
-    retrieve the same reference without depending on local filesystem paths.
-    embedding_json remains nullable so the actual face encoder can be added
-    later without changing the database contract.
+    Stores the student's registered reference image and SFace embedding.
+    API response schemas intentionally omit both biometric fields.
     """
 
     __tablename__ = "face_embeddings"
@@ -188,6 +208,30 @@ class TeacherAssignment(Base):
     )
 
 
+class StudentClassAssignment(Base):
+    """Current and historical class membership for a student."""
+
+    __tablename__ = "student_class_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(
+        Integer,
+        ForeignKey("students.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    class_id = Column(
+        Integer,
+        ForeignKey("classes.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    academic_year = Column(String(20), nullable=True)
+    semester = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
 
@@ -218,3 +262,27 @@ class AttendanceRecord(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+
+
+class NotificationEvent(Base):
+    """An account-scoped notification queued by a real application event."""
+
+    __tablename__ = "notification_events"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_notification_events_idempotency_key"),
+        Index("ix_notification_events_user_created", "user_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type = Column(String(64), nullable=False)
+    channel = Column(String(24), nullable=False, default="in_app")
+    recipient = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    delivery_status = Column(String(20), nullable=False, default="queued")
+    idempotency_key = Column(String(180), nullable=False)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sent_at = Column(DateTime(timezone=True), nullable=True)

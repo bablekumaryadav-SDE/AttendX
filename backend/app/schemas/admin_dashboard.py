@@ -8,3 +8,4 @@ class AdminDashboardResponse(BaseModel):
     total_subjects: int
     total_classes: int
     total_attendance_records: int
+    face_registered_count: int

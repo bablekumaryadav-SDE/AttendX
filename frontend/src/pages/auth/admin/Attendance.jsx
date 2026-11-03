@@ -8,6 +8,7 @@ import React, {
 import api from "../../services/api";
 
 
+import { getApiErrorMessage } from "../../utils/errors.js";
 function formatDate(value) {
   if (!value) {
     return "—";
@@ -83,14 +84,8 @@ function Attendance() {
         setRecords(data);
 
       } catch (err) {
-        console.error(
-          "Attendance loading error:",
-          err
-        );
-
         setError(
-          err?.response?.data?.detail ||
-          "Unable to load attendance records."
+          getApiErrorMessage(err, "Unable to load attendance records.")
         );
 
       } finally {

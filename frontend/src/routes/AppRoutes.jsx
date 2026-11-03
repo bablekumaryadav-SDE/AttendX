@@ -7,7 +7,7 @@ import {
   Routes,
 } from "react-router-dom";
 
-import { AuthProvider, useAuth } from "../context/AuthContext";
+import { AuthProvider } from "../context/AuthContext";
 
 import ProtectedRoute from "./ProtectedRoute";
 import DashboardLayout from "../layouts/DashboardLayout";
@@ -15,13 +15,16 @@ import AuthLayout from "../layouts/AuthLayout";
 
 import LandingPage from "../pages/LandingPage";
 import Login from "../pages/auth/Login";
-import Dashboard from "../pages/dashboard/Dashboard";
+import AdminDashboard from "../pages/auth/admin/AdminDashboard";
 
 import Students from "../pages/auth/admin/Students";
 import Teachers from "../pages/auth/admin/Teachers";
 import Classes from "../pages/auth/admin/Classes";
+import AcademicManagement from "../pages/auth/admin/AcademicManagement";
+import Notifications from "../pages/auth/admin/Notifications";
 
 import AttendancePage from "../pages/attendance/AttendancePage";
+import AttendanceMonitor from "../pages/auth/admin/AttendanceMonitor";
 import ReportsPage from "../pages/reports/ReportsPage";
 
 import StudentDashboard from "../pages/student/StudentDashboard";
@@ -30,45 +33,42 @@ import StudentAttendance from "../pages/student/StudentAttendance";
 import TeacherDashboard from "../pages/teacher/TeacherDashboard";
 import TeacherAttendance from "../pages/teacher/TeacherAttendance";
 
-function AppLoading() {
-  return (
-    <div className="app-loading">
-      <div className="loading-card">
-        <strong>AttendX</strong>
-        <span>Loading your workspace...</span>
-      </div>
-    </div>
-  );
+class WorkspaceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error) {
+    console.error("AttendX workspace render failed:", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main role="alert" className="app-error-fallback">
+          <h1>This page could not be displayed.</h1>
+          <p>Refresh the page to try again. If the problem continues, contact your administrator.</p>
+          {import.meta.env.DEV && this.state.error && (
+            <pre>{String(this.state.error.stack || this.state.error.message || this.state.error)}</pre>
+          )}
+          <button type="button" onClick={() => window.location.reload()}>
+            Refresh page
+          </button>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function HomeRoute() {
-  const { user, loading, isAuthenticated } = useAuth();
-
-  if (loading) {
-    return <AppLoading />;
-  }
-
-  if (!isAuthenticated || !user) {
-    return <LandingPage />;
-  }
-
-  const role = String(user.role || "")
-    .trim()
-    .toLowerCase();
-
-  if (role === "admin") {
-    return <Navigate to="/admin" replace />;
-  }
-
-  if (role === "teacher") {
-    return <Navigate to="/teacher" replace />;
-  }
-
-  if (role === "student") {
-    return <Navigate to="/student" replace />;
-  }
-
-  return <Navigate to="/login" replace />;
+  return <LandingPage />;
 }
 
 function AppRouteContent() {
@@ -97,7 +97,7 @@ function AppRouteContent() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
+        <Route index element={<AdminDashboard />} />
 
         <Route
           path="students"
@@ -114,15 +114,22 @@ function AppRouteContent() {
           element={<Classes />}
         />
 
+        <Route path="subjects" element={<AcademicManagement />} />
+
+        <Route path="notifications" element={<Notifications />} />
+
         <Route
           path="attendance"
-          element={<AttendancePage />}
+          element={<AttendanceMonitor />}
         />
+
+        <Route path="attendance/legacy" element={<AttendancePage />} />
 
         <Route
           path="reports"
           element={<ReportsPage />}
         />
+
       </Route>
 
       {/* Teacher workspace */}
@@ -130,7 +137,9 @@ function AppRouteContent() {
         path="/teacher"
         element={
           <ProtectedRoute allowedRoles={["teacher"]}>
-            <DashboardLayout />
+            <WorkspaceErrorBoundary>
+              <DashboardLayout />
+            </WorkspaceErrorBoundary>
           </ProtectedRoute>
         }
       >
@@ -145,6 +154,9 @@ function AppRouteContent() {
           path="reports"
           element={<ReportsPage />}
         />
+
+        <Route path="notifications" element={<Notifications />} />
+
       </Route>
 
       {/* Student workspace */}
@@ -162,6 +174,9 @@ function AppRouteContent() {
           path="attendance"
           element={<StudentAttendance />}
         />
+
+        <Route path="notifications" element={<Notifications />} />
+
       </Route>
 
       <Route
