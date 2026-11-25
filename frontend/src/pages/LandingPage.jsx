@@ -1,421 +1,116 @@
-
 import React from "react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import {
+  ArrowDown, ArrowRight, ArrowUpRight, BarChart3, BookOpenCheck, Check,
+  ChevronDown, CircleHelp, Fingerprint, GraduationCap, MapPin, QrCode,
+  ShieldCheck, Users, Zap,
+} from "lucide-react";
+import { PublicSiteFooter, PublicSiteHeader } from "../components/public/PublicSiteChrome";
 import "./LandingPage.css";
 
 const features = [
-  {
-    icon: "◉",
-    title: "SFace Verification",
-    text: "Register a student face reference, then verify it against an active attendance session with the SFace-based workflow.",
-    tag: "Face Matching",
-  },
-  {
-    icon: "▦",
-    title: "Dynamic QR Attendance",
-    text: "Teacher sessions can publish time-limited QR codes. The backend validates session eligibility and prevents duplicate records.",
-    tag: "Fast & Easy",
-  },
-  {
-    icon: "⌖",
-    title: "GPS Geo-fencing",
-    text: "When a teacher configures location for a session, attendance requests are checked against its radius.",
-    tag: "Location Aware",
-  },
-  {
-    icon: "▤",
-    title: "Reports and Analytics",
-    text: "Review attendance records, filter report data and export the current report as a CSV file.",
-    tag: "Analytics",
-  },
-  {
-    icon: "✉",
-    title: "Attendance History",
-    text: "Students can review attendance records associated with their account from the protected workspace.",
-    tag: "Records",
-  },
-  {
-    icon: "✦",
-    title: "Role-Based Dashboards",
-    text: "Admin, teacher and student accounts reach dedicated, protected workspaces through existing authentication.",
-    tag: "Three Workspaces",
-  },
+  { icon: QrCode, title: "Dynamic QR attendance", status: "Partial", detail: "QR session flows exist in the legacy attendance implementation; tenant-safe attendance writes are not enabled." },
+  { icon: MapPin, title: "GPS and geofencing", status: "Partial", detail: "Location checks exist in source. Device spoof resistance and every tenant workflow are not verified." },
+  { icon: Fingerprint, title: "Optional face verification", status: "Partial", detail: "Face matching and camera flows exist. Face use is not mandatory; this does not establish liveness." },
+  { icon: ShieldCheck, title: "Liveness detection", status: "Unavailable", detail: "Liveness detection and anti-spoofing are not implemented or verified." },
+  { icon: ShieldCheck, title: "Duplicate prevention", status: "Partial", detail: "Duplicate protections exist in selected attendance flows; full PostgreSQL validation is outstanding." },
+  { icon: BarChart3, title: "Attendance summaries and reports", status: "Partial", detail: "Selected tenant-scoped summaries are available. Legacy reports and broader analytics remain unavailable." },
+  { icon: QrCode, title: "Attendance tracking", status: "Partial", detail: "Attendance history and selected read views exist; a complete tenant-safe attendance lifecycle is not enabled." },
+  { icon: Users, title: "Secure role-based access", status: "Partial", detail: "Role-protected workspaces exist; not every dashboard action is enabled." },
+  { icon: GraduationCap, title: "Multi-college management", status: "In development", detail: "Membership selection and selected read APIs exist. Ownership migration is still a draft and business writes remain blocked." },
+  { icon: Zap, title: "Guardian notifications", status: "Not verified", detail: "Notification source exists, but tenant attribution and external delivery are not verified." },
 ];
 
 const roles = [
-  {
-    icon: "◈",
-    title: "Administrator",
-    description:
-      "Manage student and teacher records, classes, subjects and administrative attendance views.",
-    link: "/login",
-    label: "Admin Login",
-  },
-  {
-    icon: "▣",
-    title: "Teacher",
-    description:
-      "Manage class sessions, mark attendance, review student records and generate reports.",
-    link: "/login",
-    label: "Teacher Login",
-  },
-  {
-    icon: "♙",
-    title: "Student",
-    description:
-      "View your attendance percentage, subject-wise history and personal attendance records.",
-    link: "/login",
-    label: "Student Login",
-  },
+  { name: "Super Admin", icon: ShieldCheck, text: "Platform-level entry point. College operations and platform management workflows are not yet available." },
+  { name: "College Admin", icon: GraduationCap, text: "College workspace with selected read-only tenant views. Business management writes remain unavailable." },
+  { name: "Teacher", icon: BookOpenCheck, text: "Teacher workspace and attendance pages exist; tenant-safe session creation is not enabled." },
+  { name: "Student", icon: Users, text: "Student workspace and attendance views exist; available information depends on enabled routes." },
 ];
 
-function SectionHeading({ eyebrow, title, text }) {
-  return (
-    <div className="ax-section-heading">
-      <span className="ax-eyebrow">{eyebrow}</span>
-      <h2>{title}</h2>
-      <p>{text}</p>
-    </div>
-  );
+const dashboardPreviews = [
+  { name: "Super Admin", label: "Illustrative preview", items: ["Platform overview", "Application review: in development", "Activation: unavailable"] },
+  { name: "College Admin", label: "Illustrative preview", items: ["College summary", "Selected student views", "Management writes: unavailable"] },
+  { name: "Teacher", label: "Illustrative preview", items: ["Teaching workspace", "Attendance views", "Session actions: limited"] },
+  { name: "Student", label: "Illustrative preview", items: ["Student workspace", "Attendance history", "Personal academic views"] },
+];
+
+const faqs = [
+  ["What is AttendX?", "AttendX is a college attendance product in development, with protected workspaces and selected tenant-scoped read views."],
+  ["How does QR attendance work?", "QR attendance flows exist in source, but the tenant-safe end-to-end attendance workflow is not currently enabled for this website."],
+  ["Is GPS verification required?", "GPS checks are present in some attendance flows. Whether they apply depends on the configured workflow; universal enforcement is not claimed."],
+  ["Is face recognition compulsory?", "No. Face verification is optional in the existing implementation. Liveness detection is not available."],
+  ["Can students access their dashboard outside college?", "The student workspace is protected by sign-in. Location and attendance rules depend on the workflow; no general access promise is made here."],
+  ["Can multiple colleges use AttendX?", "A multi-college foundation and selected read APIs exist. The ownership migration is not applied and complete multi-college management is not ready."],
+  ["How can a college register?", "A registration form and review workflow are implemented in source, but the database migration is not applied. Applications may be unavailable until the reviewed schema is installed; approval does not activate an account."],
+  ["How are absence notifications sent?", "Notification code exists, but delivery-provider configuration and successful delivery have not been verified."],
+];
+
+function SectionTitle({ kicker, title, description, align = "center" }) {
+  return <div className={`site-section-title site-section-title-${align}`}>
+    <span className="site-kicker">{kicker}</span><h2>{title}</h2><p>{description}</p>
+  </div>;
 }
 
 export default function LandingPage() {
-  const { user } = useAuth();
-  const role = String(user?.role || "").trim().toLowerCase();
-  const workspacePath = {
-    admin: "/admin",
-    teacher: "/teacher",
-    student: "/student",
-  }[role];
-
-  return (
-    <main className="ax-landing">
-      <header className="ax-navbar">
-        <Link to="/" className="ax-brand" aria-label="AttendX home">
-          <span className="ax-brand-icon">A</span>
-          <span>
-            Attend<span className="ax-brand-accent">X</span>
-            <small>SMART ATTENDANCE PLATFORM</small>
-          </span>
-        </Link>
-
-        <nav className="ax-nav-links" aria-label="Main navigation">
-          <a href="#features">Features</a>
-          <a href="#workflow">How it works</a>
-          <a href="#portals">User portals</a>
-          <a href="#about">About</a>
-        </nav>
-
-        <div className="ax-nav-actions">
-          {!workspacePath && <Link to="/login" className="ax-login-link">
-            Sign in
-          </Link>}
-          <Link to={workspacePath || "/login"} className="ax-button ax-button-small">
-            {workspacePath ? "My workspace" : "Get started"} <span>↗</span>
-          </Link>
-        </div>
-      </header>
-
-      <section className="ax-hero">
-        <div className="ax-hero-grid">
-          <div className="ax-hero-content">
-            <div className="ax-status-pill">
-              <span className="ax-status-dot" />
-              SMARTER ATTENDANCE STARTS HERE
+  return <div className="site-shell" id="home">
+    <a className="site-skip-link" href="#main-content">Skip to content</a>
+    <PublicSiteHeader />
+    <main id="main-content">
+      <section className="site-hero" aria-labelledby="hero-title">
+        <div className="site-container site-hero-grid">
+          <div className="site-hero-copy">
+            <span className="site-pill"><span className="site-pill-dot" /> College attendance, thoughtfully designed</span>
+            <h1 id="hero-title">Smart Attendance.<br /><span>Smarter Campus Management.</span></h1>
+            <p>AttendX is designed to simplify college attendance management through digital attendance workflows, classroom verification and centralized administration.</p>
+            <div className="site-hero-actions">
+              <Link className="site-button site-button-quiet" to="/register-college">Register your College</Link>
+              <Link className="site-button site-button-primary" to="/login">Login <ArrowUpRight size={17} /></Link>
+              <a className="site-button site-button-quiet" href="#features">Explore features <ArrowDown size={16} /></a>
             </div>
-
-            <h1>
-              Attendance,
-              <br />
-              <span>made clear and accountable.</span>
-            </h1>
-
-            <p className="ax-hero-description">
-              Meet AttendX, an attendance management platform for classroom
-              sessions, face and QR verification, and attendance records.
-            </p>
-
-            <div className="ax-hero-actions">
-              <Link to={workspacePath || "/login"} className="ax-button">
-                Access your dashboard <span>→</span>
-              </Link>
-              <a href="#features" className="ax-button ax-button-outline">
-                Explore features
-              </a>
-            </div>
-
-            <div className="ax-hero-trust">
-              <div className="ax-avatar-stack" aria-hidden="true">
-                <span>A</span>
-                <span>T</span>
-                <span>S</span>
-              </div>
-              <div>
-                <strong>One connected platform</strong>
-                <p>For administrators, teachers and students</p>
-              </div>
-            </div>
+            <p className="site-hero-note">Applications are reviewed before provisioning. Approved accounts still require verified activation.</p>
           </div>
-
-          <div className="ax-hero-visual">
-            <div className="ax-orb ax-orb-one" />
-            <div className="ax-orb ax-orb-two" />
-
-            <div className="ax-dashboard-preview">
-              <div className="ax-preview-top">
-                <div>
-                  <span className="ax-preview-label">ATTENDX OVERVIEW</span>
-                  <h3>Attendance dashboard</h3>
-                </div>
-                <span className="ax-live-label">
-                  <span className="ax-status-dot" />
-                  Preview
-                </span>
-              </div>
-
-              <div className="ax-preview-welcome">
-                <div>
-                  <span>Welcome to AttendX</span>
-                  <h4>Every class, accounted for.</h4>
-                  <p>Attendance management made simpler.</p>
-                </div>
-                <div className="ax-preview-symbol">A</div>
-              </div>
-
-              <div className="ax-preview-metrics">
-                <div className="ax-metric">
-                  <span className="ax-metric-icon purple">▣</span>
-                  <span>Attendance</span>
-                  <strong>Tracking</strong>
-                  <small>Session based</small>
-                </div>
-                <div className="ax-metric">
-                  <span className="ax-metric-icon green">✓</span>
-                  <span>Verification</span>
-                  <strong>Session verified</strong>
-                  <small>QR, face and GPS*</small>
-                </div>
-              </div>
-
-              <div className="ax-preview-bottom">
-                <div>
-                  <span className="ax-mini-chart-icon">↗</span>
-                  <div>
-                    <strong>Attendance reports</strong>
-                    <small>Records and available summaries</small>
-                  </div>
-                </div>
-                <span className="ax-preview-arrow">→</span>
-              </div>
-              <p className="ax-preview-note">
-                *Features depend on configuration and implementation status.
-              </p>
+          <div className="site-preview-wrap" aria-label="Illustrative product preview">
+            <div className="site-preview-glow" />
+            <div className="site-preview-card">
+              <div className="site-preview-top"><div><span>ATTENDX WORKSPACE</span><strong>Campus overview</strong></div><span className="site-preview-tag">Illustrative preview</span></div>
+              <div className="site-preview-welcome"><span className="site-preview-monogram">AX</span><div><small>YOUR CAMPUS, AT A GLANCE</small><strong>Attendance, organized.</strong><span>Sample interface · no live data</span></div></div>
+              <div className="site-preview-stats"><div><span className="site-stat-icon"><QrCode size={18} /></span><small>WORKFLOW</small><strong>Session-based</strong><span>Availability varies</span></div><div><span className="site-stat-icon site-stat-icon-alt"><BarChart3 size={18} /></span><small>OVERVIEW</small><strong>Selected summaries</strong><span>Read-only views</span></div></div>
+              <div className="site-preview-list"><span className="site-preview-list-icon"><Check size={16} /></span><div><strong>Built around clear access</strong><small>Protected workspaces · illustrative only</small></div><ArrowRight size={17} /></div>
             </div>
-
-            <div className="ax-floating-card ax-float-top">
-              <span className="ax-float-icon">✦</span>
-              <div>
-                <strong>Session-based</strong>
-                <small>Attendance records</small>
-              </div>
-            </div>
-
-            <div className="ax-floating-card ax-float-bottom">
-              <span className="ax-float-check">✓</span>
-              <div>
-                <strong>One workspace</strong>
-                <small>Three user roles</small>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="ax-hero-bottom-line">
-          <span>BUILT FOR MODERN EDUCATION</span>
-          <span>IDENTITY · ATTENDANCE · INSIGHTS</span>
-        </div>
-      </section>
-
-      <section className="ax-features ax-section" id="features">
-        <SectionHeading
-          eyebrow="PLATFORM CAPABILITIES"
-          title="Everything attendance needs."
-          text="A unified platform designed to simplify classroom attendance and help institutions make better-informed decisions."
-        />
-
-        <div className="ax-feature-grid">
-          {features.map((feature) => (
-            <article className="ax-feature-card" key={feature.title}>
-              <div className="ax-feature-card-top">
-                <span className="ax-feature-icon">{feature.icon}</span>
-                <span className="ax-feature-tag">{feature.tag}</span>
-              </div>
-              <h3>{feature.title}</h3>
-              <p>{feature.text}</p>
-              <a href="#workflow" className="ax-feature-link">
-                Discover how <span>→</span>
-              </a>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="ax-workflow ax-section" id="workflow">
-        <div className="ax-workflow-layout">
-          <div className="ax-workflow-intro">
-            <span className="ax-eyebrow">SIMPLE WORKFLOW</span>
-            <h2>
-              From classroom
-              <br />
-              to clear insights.
-            </h2>
-            <p>
-              Bring attendance capture, validation and reporting together in
-              a consistent workflow.
-            </p>
-            <Link to="/login" className="ax-button">
-              Enter AttendX <span>→</span>
-            </Link>
-          </div>
-
-          <div className="ax-steps">
-            <article className="ax-step">
-              <span className="ax-step-number">01</span>
-              <div>
-                <h3>Create a class session</h3>
-                <p>
-                  A teacher selects the class, subject and session details.
-                </p>
-              </div>
-              <span className="ax-step-icon">▣</span>
-            </article>
-
-            <article className="ax-step">
-              <span className="ax-step-number">02</span>
-              <div>
-                <h3>Verify and record attendance</h3>
-                <p>
-                  Use the enabled attendance method and apply configured
-                  identity and location checks.
-                </p>
-              </div>
-              <span className="ax-step-icon">◉</span>
-            </article>
-
-            <article className="ax-step">
-              <span className="ax-step-number">03</span>
-              <div>
-                <h3>Review reports and insights</h3>
-                <p>
-                  Authorized users review attendance records and available report summaries.
-                </p>
-              </div>
-              <span className="ax-step-icon">↗</span>
-            </article>
+            <div className="site-preview-caption">Illustrative preview — not a live dashboard</div>
           </div>
         </div>
       </section>
 
-      <section className="ax-portals ax-section" id="portals">
-        <SectionHeading
-          eyebrow="PURPOSE-BUILT WORKSPACES"
-          title="The right tools for every role."
-          text="Each user role has a dedicated workspace. Sign in to access the features permitted for your account."
-        />
+      <section className="site-proof-strip" aria-label="Product principles"><div className="site-container site-proof-inner"><span>Designed for college workflows</span><i /><span>Role-aware access</span><i /><span>Tenant foundation in progress</span></div></section>
 
-        <div className="ax-role-grid">
-          {roles.map((role) => (
-            <article className="ax-role-card" key={role.title}>
-              <div className="ax-role-icon">{role.icon}</div>
-              <h3>{role.title}</h3>
-              <p>{role.description}</p>
-              <Link to={role.link} className="ax-role-link">
-                {role.label} <span>→</span>
-              </Link>
-            </article>
-          ))}
+      <section className="site-section site-features" id="features">
+        <div className="site-container"><SectionTitle kicker="CAPABILITIES" title="Attendance workflows, built with care." description="Explore the capabilities in AttendX. Availability varies while tenant workflows and verification continue." />
+          <div className="site-feature-grid">{features.map(({ icon: Icon, title, detail, status }) => <article className="site-feature-card" key={title} data-status={status.toLowerCase().replaceAll(" ", "-")}><div className="site-feature-top"><span className="site-feature-icon"><Icon size={20} strokeWidth={1.8} /></span><span className="site-status">{status}</span></div><h3>{title}</h3><p>{detail}</p></article>)}</div>
         </div>
       </section>
 
-      <section className="ax-security ax-section" id="about">
-        <div className="ax-security-panel">
-          <div>
-            <span className="ax-eyebrow">BUILT WITH RESPONSIBILITY</span>
-            <h2>
-              Useful insights.
-              <br />
-              Responsible access.
-            </h2>
-            <p>
-              AttendX is designed around role-based access, attendance
-              records and configurable verification workflows. Sensitive
-              student information should only be available to authorized
-              users.
-            </p>
-          </div>
-          <div className="ax-security-points">
-            <div>
-              <span>✓</span>
-              <div>
-                <strong>Role-based access</strong>
-                <p>Separate permissions for admin, teacher and student.</p>
-              </div>
-            </div>
-            <div>
-              <span>✓</span>
-              <div>
-                <strong>Attendance history</strong>
-                <p>Review records with appropriate access controls.</p>
-              </div>
-            </div>
-            <div>
-              <span>✓</span>
-              <div>
-                <strong>Authenticated access</strong>
-                <p>Protected workspaces use the existing bearer-token login flow.</p>
-              </div>
-            </div>
-          </div>
+      <section className="site-section site-workflow" id="how-it-works">
+        <div className="site-container site-workflow-grid"><div><span className="site-kicker">HOW IT WORKS</span><h2>A clearer path from campus to classroom.</h2><p>These steps describe the intended product journey. Registration and review code now exists, but the migration is unapplied and account activation is unavailable.</p><span className="site-development-note"><CircleHelp size={17} /> Illustrative journey — not every step is available today</span></div>
+          <ol className="site-steps"><li><span>01</span><div><strong>College onboarding</strong><p>Public application and Super Admin review are implemented in source. The required migration is DRAFT / NOT APPLIED; approved accounts remain pending activation.</p><em>In development</em></div></li><li><span>02</span><div><strong>Set up a workspace</strong><p>Authorized users access features currently enabled for their role and College membership.</p><em>In development</em></div></li><li><span>03</span><div><strong>Run attendance workflows</strong><p>QR, location and optional face flows exist in source; tenant-safe session creation is not enabled.</p><em>Partially implemented</em></div></li><li><span>04</span><div><strong>Review available summaries</strong><p>Selected read-only tenant views are available. Broader reports remain unavailable.</p><em>Limited availability</em></div></li></ol>
         </div>
       </section>
 
-      <section className="ax-final-cta">
-        <div>
-          <span className="ax-eyebrow">YOUR ATTENDANCE WORKSPACE</span>
-          <h2>Make every class count.</h2>
-          <p>
-            Sign in to AttendX and access your role-specific workspace.
-          </p>
-        </div>
-        <Link to="/login" className="ax-button ax-cta-button">
-          Sign in to AttendX <span>→</span>
-        </Link>
-      </section>
+      <section className="site-section site-roles" id="roles"><div className="site-container"><SectionTitle kicker="PURPOSE-BUILT ACCESS" title="A workspace for every role." description="Existing accounts sign in through the current AttendX login. The scope of available actions depends on enabled workflows." /><div className="site-role-grid">{roles.map(({ name, icon: Icon, text }) => <article className="site-role-card" key={name}><span className="site-role-icon"><Icon size={21} /></span><h3>{name}</h3><p>{text}</p><Link to="/login">Sign in <ArrowRight size={15} /></Link></article>)}</div></div></section>
 
-      <footer className="ax-footer">
-        <Link to="/" className="ax-brand ax-footer-brand">
-          <span className="ax-brand-icon">A</span>
-          <span>
-            Attend<span className="ax-brand-accent">X</span>
-            <small>SMART ATTENDANCE PLATFORM</small>
-          </span>
-        </Link>
+      <section className="site-section site-dashboards"><div className="site-container"><SectionTitle kicker="PRODUCT PREVIEW" title="A considered view of each workspace." description="Synthetic interface concepts only. These are not screenshots and contain no live or personal data." /><div className="site-dashboard-grid">{dashboardPreviews.map((preview) => <article className="site-dashboard-card" key={preview.name}><div className="site-dashboard-heading"><span className="site-dashboard-avatar">{preview.name.split(" ").map((part) => part[0]).join("")}</span><div><strong>{preview.name}</strong><small>{preview.label}</small></div><ChevronDown size={17} /></div><div className="site-dashboard-lines"><span /><span /><span /></div><ul>{preview.items.map((item) => <li key={item}><span />{item}</li>)}</ul></article>)}</div></div></section>
 
-        <p>
-          Intelligent attendance management for modern education.
-        </p>
+      <section className="site-section site-benefits" id="benefits"><div className="site-container site-benefits-grid"><div><span className="site-kicker">WHY ATTENDX</span><h2>Less friction around the school day.</h2><p>Bring attendance workflows and the information people need into a clearer digital experience—at a pace that keeps access and accuracy in view.</p><Link className="site-text-link" to="/login">Explore your workspace <ArrowRight size={16} /></Link></div><div className="site-benefit-list"><div><Check /><span><strong>Reduce manual steps</strong><small>Move attendance processes into structured digital workflows.</small></span></div><div><Check /><span><strong>Make records easier to review</strong><small>Provide protected views for information currently available.</small></span></div><div><Check /><span><strong>Keep access role-aware</strong><small>Use dedicated sign-in and protected workspaces.</small></span></div><div><Check /><span><strong>Build toward tenant-aware operations</strong><small>Selected College-scoped APIs are a foundation, not complete SaaS management.</small></span></div></div></div></section>
 
-        <div className="ax-footer-links">
-          <a href="#features">Features</a>
-          <a href="#portals">User portals</a>
-          <Link to="/login">Sign in</Link>
-        </div>
+      <section className="site-section site-security" id="about"><div className="site-container site-security-panel"><div><span className="site-kicker">ABOUT ATTENDX</span><h2>Smart workflows.<br />Responsible access.</h2><p>AttendX is designed to modernize college attendance management through intelligent verification, centralized administration and reliable digital attendance workflows.</p><p className="site-security-caveat">Tenant ownership migration remains a draft. Complete isolation across legacy APIs and production security have not been established.</p></div><div className="site-security-points"><div><ShieldCheck /><span><strong>Protected sign-in</strong><small>Existing workspaces require authentication.</small></span></div><div><Users /><span><strong>College-aware foundation</strong><small>Membership selection and selected scoped reads exist.</small></span></div><div><Fingerprint /><span><strong>Verification with limits</strong><small>Face is optional. Liveness and perfect spoof prevention are not claimed.</small></span></div></div></div></section>
 
-        <div className="ax-footer-bottom">
-          <span>© {new Date().getFullYear()} AttendX</span>
-          <span>Intelligent attendance management</span>
-        </div>
-      </footer>
+      <section className="site-section site-pricing" id="pricing"><div className="site-container site-pricing-panel"><div><span className="site-kicker">PRICING</span><h2>Plans are not configured yet.</h2><p>AttendX has no verified subscription plans or prices to publish. Contact-based pricing details are not available in the current public configuration.</p></div><span className="site-pricing-label">Contact Us for Pricing <small>Details available when plans are published</small></span></div></section>
+
+      <section className="site-section site-registration" id="contact"><div className="site-container site-registration-panel"><div><span className="site-kicker">COLLEGE ONBOARDING</span><h2>Bring Your College to AttendX.</h2><p>Submit an application for review. Submission does not activate a College or administrator account.</p><p className="site-contact-note">A verified public contact method is not configured.</p></div><Link className="site-button site-button-primary" to="/register-college">Start registration</Link></div></section>
+
+      <section className="site-section site-faq" id="faq"><div className="site-container site-faq-layout"><div><span className="site-kicker">GOOD TO KNOW</span><h2>Frequently asked questions.</h2><p>Clear answers about what is available today and what is still being built.</p></div><div className="site-faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}<ChevronDown size={18} /></summary><p>{answer}</p></details>)}</div></div></section>
     </main>
-  );
+    <PublicSiteFooter />
+  </div>;
 }

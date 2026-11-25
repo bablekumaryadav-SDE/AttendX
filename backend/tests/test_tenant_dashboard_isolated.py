@@ -1,0 +1,332 @@
+"""Tenant dashboard metrics use only synthetic in-memory SQLite data."""
+
+import unittest
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.exc import ProgrammingError
+
+from app.database import Base, get_db
+from app.main import app
+from app.models import (
+    Attendance,
+    AttendanceEvent,
+    AttendanceRecord,
+    AttendanceSession,
+    Class,
+    College,
+    CollegeMembership,
+    FaceEmbedding,
+    Student,
+    StudentClassAssignment,
+    Subject,
+    Teacher,
+    TeacherAssignment,
+    User,
+)
+from app.security import create_access_token
+from app.api.tenant_dashboard import _log_database_failure
+
+
+class TenantDashboardTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        now = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        with self.Session.begin() as db:
+            db.add_all([
+                User(id=6101, name="A admin", email="dash-a@example.test", hashed_password="x", role="admin"),
+                User(id=6102, name="B admin", email="dash-b@example.test", hashed_password="x", role="admin"),
+                User(id=6103, name="Suspended member", email="dash-inactive@example.test", hashed_password="x", role="admin"),
+                User(id=6104, name="Teacher role", email="dash-teacher@example.test", hashed_password="x", role="teacher"),
+                College(id=201, slug="dashboard-a", official_name="Dashboard A", status="active"),
+                College(id=202, slug="dashboard-b", official_name="Dashboard B", status="active"),
+                College(id=203, slug="dashboard-suspended", official_name="Dashboard Suspended", status="suspended"),
+                College(id=204, slug="dashboard-empty", official_name="Dashboard Empty", status="active"),
+            ])
+            db.flush()
+            db.add_all([
+                CollegeMembership(user_id=6101, college_id=201, role="college_admin", status="active"),
+                CollegeMembership(user_id=6102, college_id=202, role="college_admin", status="active"),
+                CollegeMembership(user_id=6103, college_id=201, role="college_admin", status="suspended"),
+                CollegeMembership(user_id=6104, college_id=201, role="teacher", status="active"),
+                CollegeMembership(user_id=6101, college_id=203, role="college_admin", status="active"),
+                Student(id=2011, college_id=201, name="A Active", email="sa@example.test", roll_number="SA", is_active=True),
+                Student(id=2012, college_id=201, name="A Inactive", email="sia@example.test", roll_number="SIA", is_active=False),
+                Student(id=2021, college_id=202, name="B Active", email="sb@example.test", roll_number="SB", is_active=True),
+                Student(id=2031, college_id=None, name="Unknown", email="su@example.test", roll_number="SU", is_active=True),
+                Teacher(id=2013, college_id=201, name="A Active Teacher", email="ta@example.test", employee_id="TA", is_active=True),
+                Teacher(id=2014, college_id=201, name="A Inactive Teacher", email="tia@example.test", employee_id="TIA", is_active=False),
+                Teacher(id=2023, college_id=202, name="B Teacher", email="tb@example.test", employee_id="TB", is_active=True),
+                Subject(id=2018, college_id=201, name="A Subject", code="SUBA", is_active=True),
+                Subject(id=2019, college_id=201, name="A Old Subject", code="SUBAI", is_active=False),
+                Subject(id=2028, college_id=202, name="B Subject", code="SUBB", is_active=True),
+                Class(id=2015, college_id=201, name="A Class", is_active=True),
+                Class(id=2016, college_id=201, name="A Old Class", is_active=False),
+                Class(id=2025, college_id=202, name="B Class", is_active=True),
+                TeacherAssignment(id=2017, college_id=201, teacher_id=2013, subject_id=2018, class_id=2015, is_active=True),
+                TeacherAssignment(id=2019, college_id=201, teacher_id=2013, subject_id=2018, class_id=2015, is_active=False),
+                StudentClassAssignment(id=2020, college_id=201, student_id=2011, class_id=2015, is_active=True),
+                StudentClassAssignment(id=2021, college_id=201, student_id=2011, class_id=2015, is_active=False),
+                AttendanceRecord(id=2101, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=now, status="present", remarks="private"),
+                AttendanceRecord(id=2102, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=now, status="late"),
+                AttendanceRecord(id=2103, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=now, status="absent"),
+                AttendanceRecord(id=2104, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=now, status="unknown"),
+                AttendanceRecord(id=2201, college_id=202, student_id=2021, teacher_id=2023, subject_id=2028, class_id=2025, attendance_date=now, status="present"),
+                AttendanceRecord(id=2301, college_id=None, student_id=2031, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=now, status="present"),
+                Attendance(id=2111, college_id=201, student_id=2011, teacher_id=2013, date=now, status="present"),
+                Attendance(id=2211, college_id=202, student_id=2021, teacher_id=2023, date=now, status="present"),
+                Attendance(id=2311, college_id=None, student_id=2031, teacher_id=2013, date=now, status="present"),
+                AttendanceSession(id=2501, college_id=201, teacher_id=2013, subject_id=2018, class_id=2015, title="Owned Session", starts_at=now, ends_at=now.replace(year=2027), status="active", qr_secret="synthetic-test-only", radius_m=100),
+                AttendanceEvent(id=2502, college_id=201, session_id=2501, student_id=2011, method="qr", status="present", verified_at=now),
+            ])
+            db.flush()
+            # Legacy data can exist without deployed composite constraints;
+            # the dashboard must still exclude mismatched linked ownership.
+            db.execute(text("INSERT INTO attendance_records (id, college_id, student_id, teacher_id, subject_id, class_id, attendance_date, status) VALUES (2401, 201, 2021, 2013, 2018, 2015, :d, 'present')"), {"d": now})
+            db.execute(text("INSERT INTO attendance_records (id, college_id, student_id, teacher_id, subject_id, class_id, attendance_date, status) VALUES (2402, 201, 2011, 2013, 2028, 2015, :d, 'present')"), {"d": now})
+            db.execute(text("INSERT INTO attendance (id, college_id, student_id, teacher_id, date, status) VALUES (2411, 201, 2021, 2013, :d, 'present')"), {"d": now})
+
+        def override_db():
+            with self.Session() as db:
+                yield db
+
+        app.dependency_overrides.clear()
+        app.dependency_overrides[get_db] = override_db
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        self.client.close()
+        app.dependency_overrides.clear()
+        self.engine.dispose()
+
+    @staticmethod
+    def headers(email):
+        return {"Authorization": f"Bearer {create_access_token({'sub': email, 'role': 'admin'})}"}
+
+    def test_dashboard_counts_are_college_scoped_and_unknown_ownership_is_excluded(self):
+        response = self.client.get("/tenant/dashboard/summary?college_id=201", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {
+            "college_name": "Dashboard A",
+            "students": {"total": 2, "active": 1, "inactive": 1},
+            "teachers": {"total": 2, "active": 1, "inactive": 1},
+            "classes": {"total": 2, "active": 1, "inactive": 1},
+            "subjects": {"total": 2, "active": 1, "inactive": 1},
+            "face_registered_count": 0,
+            "face_not_registered_count": 2,
+        })
+
+    def test_face_registration_dashboard_counts_validate_embeddings_and_exclude_other_colleges(self):
+        import hashlib
+        import json
+        vector = [1.0] + [0.0] * 127
+        with self.Session.begin() as db:
+            db.add_all([
+                FaceEmbedding(student_id=2011, image_data=b"synthetic-a", mime_type="image/jpeg", image_sha256=hashlib.sha256(b"synthetic-a").hexdigest(), embedding_json=json.dumps(vector), status="registered"),
+                FaceEmbedding(student_id=2012, image_data=b"synthetic-b", mime_type="image/jpeg", image_sha256=hashlib.sha256(b"synthetic-b").hexdigest(), embedding_json="[]", status="registered"),
+                FaceEmbedding(student_id=2021, image_data=b"synthetic-c", mime_type="image/jpeg", image_sha256=hashlib.sha256(b"synthetic-c").hexdigest(), embedding_json=json.dumps(vector), status="registered"),
+            ])
+        response = self.client.get("/tenant/dashboard/summary?college_id=201", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["face_registered_count"], 1)
+        self.assertEqual(response.json()["face_not_registered_count"], 1)
+
+    def test_dashboard_summary_does_not_require_unrelated_gps_column(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("CREATE TABLE colleges_legacy (id INTEGER PRIMARY KEY, official_name VARCHAR(200) NOT NULL, display_name VARCHAR(120), status VARCHAR(20) NOT NULL)"))
+            connection.execute(text("INSERT INTO colleges_legacy (id, official_name, display_name, status) VALUES (201, 'Dashboard A', NULL, 'active'), (202, 'Dashboard B', NULL, 'active'), (203, 'Dashboard Suspended', NULL, 'suspended'), (204, 'Dashboard Empty', NULL, 'active')"))
+            connection.execute(text("DROP TABLE colleges"))
+            connection.execute(text("ALTER TABLE colleges_legacy RENAME TO colleges"))
+        response = self.client.get(
+            "/tenant/dashboard/summary?college_id=201",
+            headers=self.headers("dash-a@example.test"),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["college_name"], "Dashboard A")
+        self.assertEqual(response.json()["students"]["total"], 2)
+
+    def test_cross_college_selector_is_denied_and_global_role_does_not_authorize(self):
+        headers = self.headers("dash-a@example.test")
+        self.assertEqual(self.client.get("/tenant/dashboard/summary?college_id=202", headers=headers).status_code, 403)
+        self.assertEqual(self.client.get("/tenant/dashboard/summary", headers=self.headers("dash-teacher@example.test")).status_code, 403)
+        self.assertEqual(self.client.get("/tenant/dashboard/summary", headers=self.headers("dash-inactive@example.test")).status_code, 403)
+        self.assertEqual(self.client.get("/tenant/dashboard/summary?college_id=203", headers=headers).status_code, 403)
+
+    def test_attendance_summary_uses_distinct_phase15_ownership_chain_and_explicit_rate_denominator(self):
+        response = self.client.get("/tenant/dashboard/attendance-summary?college_id=201", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {
+            "legacy_attendance_rows": 1,
+            "attendance_record_rows": 4,
+            "verified_attendance_event_rows": 1,
+            "verified_present_events": 1,
+            "verified_late_events": 0,
+            "verified_absent_events": 0,
+            "verified_unclassified_events": 0,
+            "verified_classified_events_denominator": 1,
+            "verified_presence_rate_percent": 100.0,
+            "present_records": 1,
+            "late_records": 1,
+            "absent_records": 1,
+            "unclassified_status_records": 1,
+            "classified_records_denominator": 3,
+            "recorded_presence_rate_percent": 66.67,
+            "trend_available": False,
+            "trend_start_date": None,
+            "trend_partial": False,
+            "trend_excluded_records": 0,
+            "trends": [],
+            "trend_unavailable_reason": "No attendance records have verified enrollment and Teacher assignment intervals. Earliest reliable trend date: not established.",
+        })
+
+    def test_trends_include_only_attendance_with_both_relationships_valid_on_attendance_date(self):
+        with self.Session.begin() as db:
+            teacher_assignment = db.query(TeacherAssignment).filter_by(id=2017).one()
+            enrollment = db.query(StudentClassAssignment).filter_by(id=2020).one()
+            teacher_assignment.effective_from = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            teacher_assignment.effective_to = datetime(2026, 1, 4, tzinfo=timezone.utc)
+            enrollment.effective_from = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            enrollment.effective_to = datetime(2026, 1, 6, tzinfo=timezone.utc)
+            # A future recorded relationship is valid on the future attendance
+            # date; the exclusive end instant is not valid.
+            db.add_all([
+                TeacherAssignment(id=2018, college_id=201, teacher_id=2013, subject_id=2018, class_id=2015, academic_year="2025-26", semester=1, is_active=False, effective_from=datetime(2026, 1, 5, tzinfo=timezone.utc), effective_to=datetime(2026, 1, 6, tzinfo=timezone.utc)),
+                StudentClassAssignment(id=2022, college_id=201, student_id=2011, class_id=2015, academic_year="2025-26", semester=1, is_active=False, effective_from=datetime(2026, 1, 5, tzinfo=timezone.utc), effective_to=datetime(2026, 1, 6, tzinfo=timezone.utc)),
+                AttendanceRecord(id=2105, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=datetime(2025, 12, 31, tzinfo=timezone.utc), status="present"),
+                AttendanceRecord(id=2106, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=datetime(2026, 1, 4, tzinfo=timezone.utc), status="present"),
+                AttendanceRecord(id=2107, college_id=201, student_id=2011, teacher_id=2013, subject_id=2018, class_id=2015, attendance_date=datetime(2026, 1, 5, tzinfo=timezone.utc), status="late"),
+            ])
+        response = self.client.get("/tenant/dashboard/attendance-summary?college_id=201", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["trend_available"])
+        self.assertTrue(payload["trend_partial"])
+        self.assertEqual(payload["trend_start_date"], "2026-01-02")
+        self.assertEqual(payload["trend_excluded_records"], 2)
+        self.assertEqual(payload["trends"], [{
+            "period": "2026-01", "records": 5, "present": 1, "late": 2,
+            "absent": 1, "unclassified": 1, "presence_rate_percent": 75.0,
+        }])
+
+    def test_duplicate_association_joins_do_not_inflate_aggregates(self):
+        response = self.client.get("/tenant/dashboard/attendance-summary?college_id=201", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["attendance_record_rows"], 4)
+        self.assertEqual(response.json()["classified_records_denominator"], 3)
+
+    def test_empty_college_returns_zero_counts_and_no_division_or_fake_rate(self):
+        summary = self.client.get("/tenant/dashboard/summary?college_id=204", headers=self.headers("dash-a@example.test"))
+        # The user has no membership in College 204; an empty dataset is tested
+        # with a synthetic authorized membership created only in this fixture.
+        self.assertEqual(summary.status_code, 403)
+        with self.Session.begin() as db:
+            db.add(CollegeMembership(user_id=6101, college_id=204, role="college_admin", status="active"))
+        summary = self.client.get("/tenant/dashboard/summary?college_id=204", headers=self.headers("dash-a@example.test"))
+        attendance = self.client.get("/tenant/dashboard/attendance-summary?college_id=204", headers=self.headers("dash-a@example.test"))
+        self.assertEqual(summary.status_code, 200, summary.text)
+        self.assertEqual(summary.json()["college_name"], "Dashboard Empty")
+        self.assertTrue(all(entity == {"total": 0, "active": 0, "inactive": 0} for key, entity in summary.json().items() if key in {"students", "teachers", "classes", "subjects"}))
+        self.assertEqual(summary.json()["face_registered_count"], 0)
+        self.assertEqual(summary.json()["face_not_registered_count"], 0)
+        self.assertEqual(attendance.status_code, 200, attendance.text)
+        self.assertEqual(attendance.json()["classified_records_denominator"], 0)
+        self.assertIsNone(attendance.json()["recorded_presence_rate_percent"])
+
+    def test_legacy_dashboard_and_analytics_routes_remain_default_denied(self):
+        headers = self.headers("dash-a@example.test")
+        for path in ("/admin-dashboard", "/analytics/overview", "/analytics/records", "/analytics/low-attendance", "/dashboard/student/attendance"):
+            with self.subTest(path=path):
+                response = self.client.get(path, headers=headers)
+                self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(self.client.post("/tenant/dashboard/summary", headers=headers, json={}).status_code, 405)
+
+    def test_unauthenticated_reads_and_missing_ownership_schema_fail_closed(self):
+        self.assertEqual(self.client.get("/tenant/dashboard/summary").status_code, 401)
+        headers = self.headers("dash-a@example.test")
+        with self.engine.begin() as connection:
+            connection.execute(text("DROP TABLE subjects"))
+        summary = self.client.get("/tenant/dashboard/summary?college_id=201", headers=headers)
+        self.assertEqual(summary.status_code, 503, summary.text)
+        self.assertEqual(summary.json(), {"detail": "College dashboard summary is unavailable."})
+        with self.engine.begin() as connection:
+            connection.execute(text("DROP TABLE attendance_records"))
+        attendance = self.client.get("/tenant/dashboard/attendance-summary?college_id=201", headers=headers)
+        self.assertEqual(attendance.status_code, 503, attendance.text)
+        self.assertEqual(attendance.json(), {"detail": "College attendance summary is unavailable."})
+
+    def test_dashboard_logs_safe_missing_column_metadata_without_sql_or_driver_message(self):
+        class OriginalError(Exception):
+            sqlstate = "42703"
+            pgcode = None
+
+            def __init__(self):
+                super().__init__("synthetic message must not be logged")
+                self.diag = SimpleNamespace(
+                    column_name="college_id",
+                    table_name="students",
+                    schema_name="public",
+                    constraint_name=None,
+                )
+
+        failure = ProgrammingError("synthetic SQL with values", None, OriginalError())
+        with self.assertLogs("app.api.tenant_dashboard", level="ERROR") as captured:
+            _log_database_failure(failure, stage="ownership_metrics_query")
+        self.assertIn("sqlstate=42703", captured.output[0])
+        self.assertIn("schema=public", captured.output[0])
+        self.assertIn("relation=students", captured.output[0])
+        self.assertIn("column=college_id", captured.output[0])
+        self.assertNotIn("synthetic message", captured.output[0])
+        self.assertNotIn("synthetic SQL", captured.output[0])
+
+    def test_session_finalization_absences_are_counted_as_session_events(self):
+        with self.Session.begin() as db:
+            db.add(StudentClassAssignment(
+                id=2022,
+                college_id=201,
+                student_id=2012,
+                class_id=2015,
+                is_active=True,
+            ))
+            db.add(AttendanceEvent(
+                id=2503,
+                college_id=201,
+                session_id=2501,
+                student_id=2012,
+                method="session_close",
+                status="absent",
+                verified_at=datetime(2026, 1, 2, 1, tzinfo=timezone.utc),
+            ))
+        response = self.client.get(
+            "/tenant/dashboard/attendance-summary?college_id=201",
+            headers=self.headers("dash-a@example.test"),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["verified_attendance_event_rows"], 2)
+        self.assertEqual(response.json()["verified_absent_events"], 1)
+
+    def test_aggregate_responses_expose_no_personal_or_sensitive_fields(self):
+        headers = self.headers("dash-a@example.test")
+        forbidden_keys = {"email", "name", "remarks", "qr_secret", "confidence", "device_hash", "verification_reason", "hashed_password"}
+
+        def response_keys(value):
+            if isinstance(value, dict):
+                return set(value).union(*(response_keys(item) for item in value.values()))
+            if isinstance(value, list):
+                return set().union(*(response_keys(item) for item in value))
+            return set()
+
+        for path in ("/tenant/dashboard/summary?college_id=201", "/tenant/dashboard/attendance-summary?college_id=201"):
+            response = self.client.get(path, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotIn("college_id", response.json())
+            self.assertFalse(forbidden_keys.intersection(response_keys(response.json())))
+
+
+if __name__ == "__main__":
+    unittest.main()

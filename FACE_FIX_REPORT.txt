@@ -1,0 +1,447 @@
+ATTENDX DIAGNOSTIC REPORT - 10/27/2026 15:19:46
+
+=== PYTHON LIBRARIES ===
+OpenCV 5.0.0
+NumPy 2.5.4
+
+=== DATABASE / MODEL STATUS ===
+(1, 'pintu Kumar', False, None, False, False)
+(4, 'kalicharn Rajbhar', False, None, False, False)
+(5, 'BABLU KUMAR YADAV', False, 'registered', False, True)
+(6, 'kamlesh yadav', False, 'registered', False, True)
+(7, 'amit yadav', False, 'registered', False, True)
+(8, 'vivek kushwaha', True, 'registered', False, True)
+(9, 'bittu', True, 'registered', False, True)
+(10, 'ssaif', True, 'registered', False, True)
+(11, 'bky', True, 'registered', False, True)
+(12, 'Rohit', True, 'registered', False, True)
+
+=== FACE REGISTRATION ENDPOINT ===
+471:         raise HTTPException(
+472:             status_code=status.HTTP_409_CONFLICT,
+473:             detail="Unable to activate student.",
+474:         ) from exc
+475: 
+476:     return student
+477: 
+478: 
+479: # =========================================================
+480: # REGISTER STUDENT FACE
+481: # =========================================================
+482: 
+483: @router.post(
+484:     "/{student_id}/face",
+485:     response_model=StudentResponse,
+486: )
+487: async def register_student_face(
+488:     student_id: int,
+489:     file: Annotated[UploadFile, File(...)],
+490:     db: Session = Depends(get_db),
+491:     current_user=Depends(get_current_admin),
+492: ):
+493:     student = _student_or_404(db, student_id)
+494: 
+495:     if not student.is_active:
+496:         raise HTTPException(
+497:             status_code=status.HTTP_400_BAD_REQUEST,
+498:             detail="Activate the student before registering a face.",
+499:         )
+500: 
+501:     data = await file.read()
+502: 
+503:     _validate_face_file(file.content_type, data)
+504: 
+505:     image_hash = hashlib.sha256(data).hexdigest()
+506: 
+507:     duplicate_image = (
+508:         db.query(FaceEmbedding)
+509:         .filter(
+510:             FaceEmbedding.image_sha256 == image_hash,
+511:             FaceEmbedding.student_id != student_id,
+512:         )
+513:         .first()
+514:     )
+515: 
+516:     if duplicate_image:
+517:         raise HTTPException(
+518:             status_code=status.HTTP_409_CONFLICT,
+519:             detail="This face image is already registered to another student.",
+520:         )
+521: 
+522:     registration = student.face_registration
+523: 
+524:     if registration is None:
+525:         registration = FaceEmbedding(student_id=student.id)
+526:         db.add(registration)
+527: 
+528:     registration.image_data = data
+529:     registration.mime_type = file.content_type or "image/jpeg"
+530:     registration.image_sha256 = image_hash
+531:     registration.status = "registered"
+532:     registration.embedding_json = None
+533: 
+534:     try:
+535:         db.commit()
+536:         db.refresh(student)
+537:     except IntegrityError as exc:
+538:         db.rollback()
+539: 
+540:         raise HTTPException(
+541:             status_code=status.HTTP_409_CONFLICT,
+542:             detail="Unable to save face registration.",
+543:         ) from exc
+544: 
+545:     return student
+546: 
+547: 
+548: # =========================================================
+549: # REMOVE STUDENT FACE
+550: # =========================================================
+551: 
+552: @router.delete("/{student_id}/face")
+553: def remove_student_face(
+554:     student_id: int,
+555:     db: Session = Depends(get_db),
+556:     current_user=Depends(get_current_admin),
+557: ):
+558:     _student_or_404(db, student_id)
+559: 
+560:     registration = (
+561:         db.query(FaceEmbedding)
+562:         .filter(FaceEmbedding.student_id == student_id)
+563:         .first()
+564:     )
+565: 
+566:     if registration:
+567:         db.delete(registration)
+568:         db.commit()
+569: 
+570:     return {"message": "Face registration removed successfully."}
+
+=== ATTENDANCE ROUTES ===
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:7: from app.api.attendance import router as attendance_router
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:8: from app.api.attendance_sessions import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:9: router as attendance_sessions_router,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:14: from app.api.attendance_records import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:15: router as attendance_records_router,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:26: from app.api.student_attendance import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:27: router as student_attendance_router,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:38: description="AttendX Smart Attendance Management API",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:89: attendance_router,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:90: prefix="/attendance",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:91: tags=["Attendance"],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:94: app.include_router(attendance_sessions_router)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:95: app.include_router(student_attendance_router)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:115: attendance_records_router,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:116: prefix="/attendance-records",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\main.py:117: tags=["Attendance Records"],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:45: The image is kept in PostgreSQL so the future recognition service can
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:47: embedding_json remains nullable so the actual face encoder can be added
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:51: __tablename__ = "face_embeddings"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:66: embedding_json = Column(String, nullable=True)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:122: class Attendance(Base):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:123: __tablename__ = "attendance"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:191: class AttendanceRecord(Base):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:192: __tablename__ = "attendance_records"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models.py:201: attendance_date = Column(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\admin_dashboard.py:12: AttendanceRecord,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\admin_dashboard.py:37: total_attendance_records=db.query(AttendanceRecord).count(),
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:117: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:129: FROM attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:130: JOIN attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:143: FROM attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:144: JOIN attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:170: "attendance_percentage": percentage,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:174: @router.get("/low-attendance")
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:175: def low_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:242: ) AS attendance_percentage
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:246: JOIN attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:249: JOIN attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\analytics.py:274: attendance_percentage ASC,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:6: from app.models import Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:7: from app.schemas.attendance import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:8: AttendanceCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:9: AttendanceUpdate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:10: AttendanceResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:19: response_model=AttendanceResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:21: def create_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:22: attendance: AttendanceCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:26: new_attendance = Attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:27: student_id=attendance.student_id,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:28: teacher_id=attendance.teacher_id,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:29: date=attendance.date,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:30: status=attendance.status,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:33: db.add(new_attendance)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:35: db.refresh(new_attendance)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:37: return new_attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:42: response_model=list[AttendanceResponse],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:44: def get_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:48: return db.query(Attendance).order_by(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:49: Attendance.id.desc()
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:54: "/{attendance_id}",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:55: response_model=AttendanceResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:57: def get_attendance_by_id(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:58: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:62: attendance = db.query(Attendance).filter(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:63: Attendance.id == attendance_id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:66: if not attendance:
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:69: detail="Attendance record not found",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:72: return attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:76: "/{attendance_id}",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:77: response_model=AttendanceResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:79: def update_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:80: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:81: attendance_data: AttendanceUpdate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:85: attendance = db.query(Attendance).filter(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:86: Attendance.id == attendance_id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:89: if not attendance:
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:92: detail="Attendance record not found",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:95: update_data = attendance_data.model_dump(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:100: setattr(attendance, field, value)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:103: db.refresh(attendance)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:105: return attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:109: "/{attendance_id}",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:111: def delete_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:112: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:116: attendance = db.query(Attendance).filter(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:117: Attendance.id == attendance_id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:120: if not attendance:
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:123: detail="Attendance record not found",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:126: db.delete(attendance)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance.py:130: "message": "Attendance record deleted successfully"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:6: from app.models import AttendanceRecord, Student, Teacher, User
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:7: from app.schemas.attendance_record import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:8: AttendanceRecordCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:9: AttendanceRecordUpdate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:10: AttendanceRecordResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:84: AttendanceRecord.teacher_id == teacher.id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:91: AttendanceRecord.student_id == student.id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:100: def _check_status(attendance_status: str):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:101: normalized = str(attendance_status).strip().lower()
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:114: record: AttendanceRecord,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:126: detail="You can only manage your own attendance records.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:132: response_model=AttendanceRecordResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:135: def create_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:136: data: AttendanceRecordCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:141: attendance_status = _check_status(data.status)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:143: # Teacher ko apni profile ke naam se hi attendance mark karni hogi.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:150: detail="You can only mark attendance for your own teacher profile.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:181: db.query(AttendanceRecord)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:183: AttendanceRecord.student_id == data.student_id,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:184: AttendanceRecord.subject_id == data.subject_id,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:185: AttendanceRecord.class_id == data.class_id,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:186: AttendanceRecord.attendance_date == data.attendance_date,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:194: detail="Attendance already marked for this student, subject, class and date.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:197: record = AttendanceRecord(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:202: attendance_date=data.attendance_date,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:203: status=attendance_status,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:219: response_model=list[AttendanceRecordResponse],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:221: def get_attendance_records(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:225: query = db.query(AttendanceRecord)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:236: AttendanceRecord.attendance_date.desc(),
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:237: AttendanceRecord.id.desc(),
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:245: response_model=list[AttendanceRecordResponse],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:247: def get_student_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:260: detail="You can only view your own attendance.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:263: query = db.query(AttendanceRecord).filter(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:264: AttendanceRecord.student_id == student_id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:275: .order_by(AttendanceRecord.attendance_date.desc())
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:281: "/{attendance_id}",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:282: response_model=AttendanceRecordResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:284: def get_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:285: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:289: query = db.query(AttendanceRecord).filter(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:290: AttendanceRecord.id == attendance_id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:304: detail="Attendance record not found.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:311: "/{attendance_id}",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:312: response_model=AttendanceRecordResponse,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:314: def update_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:315: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:316: data: AttendanceRecordUpdate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:321: db.query(AttendanceRecord)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:322: .filter(AttendanceRecord.id == attendance_id)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:329: detail="Attendance record not found.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:353: @router.delete("/{attendance_id}")
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:354: def delete_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:355: attendance_id: int,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:360: db.query(AttendanceRecord)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:361: .filter(AttendanceRecord.id == attendance_id)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:368: detail="Attendance record not found.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_records.py:385: "message": "Attendance record deleted successfully."
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:9: from app.schemas.attendance import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:10: AttendanceSessionCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:12: ManualAttendanceRequest,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:14: from app.services.attendance_core import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:27: prefix="/attendance",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:28: tags=["Attendance Sessions"],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:41: profile for normal teacher attendance operations.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:64: Load one attendance session.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:70: FROM attendance_sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:82: detail="Attendance session not found.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:221: f"AttendX attendance alert for {student_name}.\n\n"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:222: f"Attendance session: {session_title}\n"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:225: f"The student was marked ABSENT after the attendance "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:238: AND event_type = 'attendance_absent'
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:277: 'attendance_absent',
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:308: 2. Check attendance_events for this session.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:309: 3. Students without present/late attendance become ABSENT.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:310: 4. Create real attendance_events records.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:316: # Existing 70% attendance architecture does not yet have
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:363: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:412: FROM attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:444: INSERT INTO attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:492: # Create Attendance Session
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:500: body: AttendanceSessionCreate,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:505: Teacher starts a new attendance session.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:597: INSERT INTO attendance_sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:650: "attendance_session.created",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:651: "attendance_session",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:664: # List Attendance Sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:689: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:714: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:750: Close attendance session and automatically mark
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:778: detail="This attendance session is already closed.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:783: # Finalize attendance before closing the session.
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:795: UPDATE attendance_sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:810: "attendance_session.closed",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:811: "attendance_session",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:829: "Attendance session closed and "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:830: "attendance finalized."
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:879: UPDATE attendance_sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:956: UPDATE attendance_sessions
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:991: # Student QR Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1006: detail="Only students can submit QR attendance.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1029: "Attendance session is "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1061: "for this attendance session."
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1069: f"Outside attendance zone "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1078: FROM attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1094: "Attendance has already been "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1102: INSERT INTO attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1141: "attendance.verified",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1142: "attendance_session",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1155: "message": "Attendance recorded successfully.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1165: # Teacher Manual Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1171: def manual_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1173: body: ManualAttendanceRequest,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1224: FROM attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1241: UPDATE attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1262: INSERT INTO attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1291: "attendance.manual_update",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1292: "attendance_session",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1311: # Live Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1317: def live_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1362: LEFT JOIN attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1390: # Student Attendance History
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1396: def my_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1430: FROM attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\attendance_sessions.py:1432: JOIN attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:6: from app.models import User, Student, AttendanceRecord, Attendance, Subject
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:7: from app.schemas.dashboard import AttendanceSummary, SubjectAttendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:17: "/student/attendance",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:18: response_model=AttendanceSummary
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:20: def get_student_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:37: db.query(AttendanceRecord, Attendance, Subject)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:39: Attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:40: AttendanceRecord.attendance_id == Attendance.id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:44: Attendance.subject_id == Subject.id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:47: AttendanceRecord.student_id == student.id
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:54: 1 for record, attendance, subject in records
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:59: attendance_percentage = (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:67: for record, attendance, subject in records:
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:92: item["attendance_percentage"] = (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:99: SubjectAttendance(**item)
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:102: return AttendanceSummary(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\dashboard.py:106: attendance_percentage=attendance_percentage,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:38: notify_low_attendance BOOLEAN
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:80: notify_low_attendance: bool = True
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:282: "notify_low_attendance": (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:283: data.notify_low_attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:336: notify_low_attendance=mapping[
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:337: "notify_low_attendance"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:385: notify_low_attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:454: notify_low_attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:466: :notify_low_attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:490: notify_low_attendance =
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:491: EXCLUDED.notify_low_attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\guardians.py:519: notify_low_attendance,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\students.py:532: registration.embedding_json = None
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:7: from app.schemas.attendance import StudentQrAttendanceRequest
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:8: from app.services.attendance_core import (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:16: prefix="/attendance/student",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:17: tags=["Student Attendance"],
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:66: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:80: detail="Attendance session not found.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:128: FROM attendance_sessions s
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:135: LEFT JOIN attendance_events e
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:154: def submit_qr_attendance(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:156: body: StudentQrAttendanceRequest,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:163: detail="Only students can submit attendance.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:181: detail="This attendance session is closed.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:187: detail="Attendance session is not currently open.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:223: "for this attendance session."
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:231: f"You are outside the attendance zone "
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:240: FROM attendance_events
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:255: detail="Attendance has already been recorded for this session.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:261: INSERT INTO attendance_events (
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:298: "attendance.student_qr_verified",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:299: "attendance_session",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\api\student_attendance.py:312: "message": "Attendance recorded successfully.",
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\admin_dashboard.py:10: total_attendance_records: int
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:8: # Legacy Attendance CRUD Schemas
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:11: class AttendanceCreate(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:22: class AttendanceUpdate(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:35: class AttendanceResponse(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:48: # Attendance Session
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:51: class AttendanceSessionCreate(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:91: class AttendanceSessionResponse(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:153: class StudentQrAttendanceRequest(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:178: # Manual Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:181: class ManualAttendanceRequest(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:197: # Live Attendance
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:200: class LiveAttendanceItem(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:223: # Attendance Event Response
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance.py:226: class AttendanceEventResponse(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance_record.py:6: class AttendanceRecordCreate(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance_record.py:11: attendance_date: datetime
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance_record.py:16: class AttendanceRecordUpdate(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance_record.py:21: class AttendanceRecordResponse(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\attendance_record.py:27: attendance_date: datetime
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\dashboard.py:5: class SubjectAttendance(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\dashboard.py:11: attendance_percentage: float
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\dashboard.py:14: class AttendanceSummary(BaseModel):
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\dashboard.py:18: attendance_percentage: float
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\schemas\dashboard.py:19: subjects: List[SubjectAttendance]
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\services\attendance_core.py:158: INSERT INTO attendance_audit_logs
+
+=== FRONTEND REGISTRATION API ===
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:15: registerStudentFace,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:316: (student) => student.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1085: await registerStudentFace(
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1303: editingStudent?.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1310: {editingStudent?.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1368: editingStudent?.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1375: {editingStudent?.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:1662: editingStudent?.face_registered &&
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:2002: ? Refresh
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:2165: student.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:2172: {student.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:3812: registeredStudent.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:3816: registeredStudent.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\auth\admin\Students.jsx:3824: {registeredStudent.face_registered
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:82: const [refreshing, setRefreshing] =
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:118: setRefreshing(true);
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:158: setRefreshing(false);
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:573: className="student-attendance-refresh"
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:577: disabled={refreshing}
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:579: {refreshing
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:580: ? "Refreshing..."
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentAttendance.jsx:581: : "Refresh"}
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:17: RefreshCw,
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:95: const [refreshing, setRefreshing] = useState(false);
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:101: setRefreshing(true);
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:164: setRefreshing(false);
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:279: disabled={loading || refreshing}
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:281: <RefreshCw
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:283: className={refreshing ? "sd-spin" : ""}
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\pages\student\StudentDashboard.jsx:286: {refreshing ? "Refreshing" : "Refresh"}
+C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\frontend\src\services\students.js:68: export async function registerStudentFace(

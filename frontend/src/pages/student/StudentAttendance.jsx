@@ -1,12 +1,14 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import jsQR from "jsqr";
 import { useLocation as useRouterLocation } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 
 import {
   getMyFaceStatus,
@@ -18,11 +20,26 @@ import {
 } from "../../services/attendance";
 
 import "./StudentAttendance.css";
-import { getApiErrorMessage } from "../../utils/errors";
+import { getApiErrorMessage, uniqueApiErrorMessages } from "../../utils/errors";
+import { getFreshAttendanceLocation } from "../../utils/attendanceLocation";
+import { getTenantCollegeProfile } from "../../services/tenant";
 
 
 function getErrorMessage(error, fallback) {
+  if (
+    Number(error?.response?.status) === 403
+    && String(error?.response?.data?.detail || "").trim()
+      === "An active, verified Student profile link is required in this College."
+  ) {
+    return "Your Student account needs an active, verified profile link in this College. Ask your College Admin to verify the correct existing account-to-profile link, then select Refresh.";
+  }
   return getApiErrorMessage(error, fallback);
+}
+
+function isStudentProfileLinkRequired(error) {
+  return Number(error?.response?.status) === 403
+    && String(error?.response?.data?.detail || "").trim()
+      === "An active, verified Student profile link is required in this College.";
 }
 
 
@@ -71,9 +88,15 @@ function formatTime(value) {
 
 export default function StudentAttendance() {
   const routeLocation = useRouterLocation();
+  const { user, activeCollegeId } = useAuth();
+  const authenticatedUserId = user?.user_id ?? user?.id;
   const [sessions, setSessions] = useState([]);
   const [records, setRecords] = useState([]);
   const [faceStatus, setFaceStatus] = useState(null);
+  const [sessionsLoadState, setSessionsLoadState] = useState("loading");
+  const [attendanceHistoryLoadState, setAttendanceHistoryLoadState] = useState("loading");
+  const [faceStatusLoadState, setFaceStatusLoadState] = useState("loading");
+  const [faceProfileLinkRequired, setFaceProfileLinkRequired] = useState(false);
 
   const [selectedSession, setSelectedSession] =
     useState(null);
@@ -95,6 +118,7 @@ export default function StudentAttendance() {
   const [faceCameraActive, setFaceCameraActive] = useState(false);
   const [faceRegistrationMode, setFaceRegistrationMode] = useState(false);
   const [faceSubmitting, setFaceSubmitting] = useState(false);
+  const [faceConsent, setFaceConsent] = useState(false);
 
   const [scannerSupported, setScannerSupported] =
     useState(false);
@@ -121,54 +145,124 @@ export default function StudentAttendance() {
   const faceStreamRef = useRef(null);
   const scannerTimerRef = useRef(null);
   const appliedRouteSelectionRef = useRef(null);
+  const attendanceRequestRef = useRef(0);
+  const inFlightAttendanceRef = useRef(null);
+  const authorizationBlockedScopeRef = useRef(null);
+  const attendanceSubmissionRef = useRef(false);
+  const locationRequestRef = useRef(null);
+
+  useLayoutEffect(() => {
+    attendanceRequestRef.current += 1;
+    inFlightAttendanceRef.current = null;
+    authorizationBlockedScopeRef.current = null;
+    setSessions([]);
+    setRecords([]);
+    setFaceStatus(null);
+    setSessionsLoadState(activeCollegeId ? "loading" : "idle");
+    setAttendanceHistoryLoadState(activeCollegeId ? "loading" : "idle");
+    setFaceStatusLoadState(activeCollegeId ? "loading" : "idle");
+    setFaceProfileLinkRequired(false);
+    setSelectedSession(null);
+    setToken("");
+    setLocation(null);
+    setError("");
+    setNotice("");
+    setLoading(Boolean(activeCollegeId));
+    setRefreshing(false);
+  }, [authenticatedUserId, activeCollegeId]);
 
 
   const loadData = useCallback(
-    async (silent = false) => {
+    async (silent = false, explicitAuthorizationRetry = false) => {
+      const requestScope = `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+      if (authorizationBlockedScopeRef.current === requestScope && !explicitAuthorizationRetry) return;
+      if (explicitAuthorizationRetry && authorizationBlockedScopeRef.current === requestScope) {
+        authorizationBlockedScopeRef.current = null;
+      }
+      if (inFlightAttendanceRef.current?.scope === requestScope) return;
+      const requestId = ++attendanceRequestRef.current;
+      const requestCollegeId = activeCollegeId;
+      const requestUserId = authenticatedUserId;
+      if (!activeCollegeId) {
+        setSessions([]);
+        setRecords([]);
+        setFaceStatus(null);
+        setSessionsLoadState("idle");
+        setAttendanceHistoryLoadState("idle");
+        setFaceStatusLoadState("idle");
+        setFaceProfileLinkRequired(false);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      const requestMarker = { scope: requestScope, id: requestId };
+      inFlightAttendanceRef.current = requestMarker;
       try {
         if (silent) {
           setRefreshing(true);
         } else {
           setLoading(true);
         }
+        setSessionsLoadState("loading");
+        setAttendanceHistoryLoadState("loading");
+        setFaceStatusLoadState("loading");
 
         setError("");
 
-        const [
-          activeSessions,
-          attendanceRecords,
-          registrationStatus,
-        ] = await Promise.all([
-          getActiveStudentSessions(),
-          getMyAttendance(),
-          getMyFaceStatus(),
+        const results = await Promise.allSettled([
+          getActiveStudentSessions(activeCollegeId),
+          getMyAttendance(activeCollegeId),
+          getMyFaceStatus(activeCollegeId),
         ]);
 
-        setSessions(
-          Array.isArray(activeSessions)
-            ? activeSessions
-            : []
-        );
+        if (attendanceRequestRef.current !== requestId || String(requestCollegeId) !== String(activeCollegeId) || String(requestUserId) !== String(authenticatedUserId)) return;
 
-        setRecords(
-          Array.isArray(attendanceRecords)
-            ? attendanceRecords
-            : []
-        );
-        setFaceStatus(registrationStatus || null);
+        if (results.some((result) => result.status === "rejected" && Number(result.reason?.response?.status) === 403)) {
+          authorizationBlockedScopeRef.current = requestScope;
+        }
+
+        const [sessionsResult, attendanceResult, faceResult] = results;
+        setSessions(sessionsResult.status === "fulfilled" && Array.isArray(sessionsResult.value) ? sessionsResult.value : []);
+        setRecords(attendanceResult.status === "fulfilled" && Array.isArray(attendanceResult.value) ? attendanceResult.value : []);
+        setFaceStatus(faceResult.status === "fulfilled" ? faceResult.value || null : null);
+        setSessionsLoadState(sessionsResult.status === "fulfilled" ? "ready" : "error");
+        setAttendanceHistoryLoadState(attendanceResult.status === "fulfilled" ? "ready" : "error");
+        setFaceStatusLoadState(faceResult.status === "fulfilled" ? "ready" : "error");
+        setFaceProfileLinkRequired(faceResult.status === "rejected" && isStudentProfileLinkRequired(faceResult.reason));
+
+        const fallbacks = [
+          "Active sessions could not be loaded.",
+          "Attendance history could not be loaded.",
+          "Face registration status could not be checked.",
+        ];
+        const errors = results
+          .map((result, index) => ({ result, index }))
+          .filter(({ result }) => result.status === "rejected")
+          .map(({ result, index }) => getErrorMessage(result.reason, fallbacks[index]));
+        if (errors.length) setError(uniqueApiErrorMessages(errors));
       } catch (error) {
+        if (attendanceRequestRef.current !== requestId || String(requestCollegeId) !== String(activeCollegeId) || String(requestUserId) !== String(authenticatedUserId)) return;
+        if (Number(error?.response?.status) === 403) authorizationBlockedScopeRef.current = requestScope;
         setError(
           getErrorMessage(
             error,
             "Unable to load attendance data."
           )
         );
+        setSessionsLoadState("error");
+        setAttendanceHistoryLoadState("error");
+        setFaceStatus(null);
+        setFaceStatusLoadState("error");
+        setFaceProfileLinkRequired(isStudentProfileLinkRequired(error));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (inFlightAttendanceRef.current === requestMarker) inFlightAttendanceRef.current = null;
+        if (attendanceRequestRef.current === requestId && String(requestUserId) === String(authenticatedUserId)) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    []
+    [activeCollegeId, authenticatedUserId]
   );
 
 
@@ -227,7 +321,7 @@ export default function StudentAttendance() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") {
-        loadData(true);
+          loadData(true);
       }
     }, 15000);
 
@@ -320,54 +414,19 @@ export default function StudentAttendance() {
 
 
   function getCurrentLocation() {
-    return new Promise(
-      (resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(
-            new Error(
-              "Geolocation is not supported by this browser."
-            )
-          );
-
-          return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            const coordinates = {
-              latitude:
-                position.coords.latitude,
-
-              longitude:
-                position.coords.longitude,
-
-              accuracy:
-                position.coords.accuracy,
-            };
-
-            setLocation(coordinates);
-
-            resolve(coordinates);
-          },
-
-          (geoError) => {
-            reject(
-              new Error(
-                geoError.code === 1
-                  ? "Location permission was denied."
-                  : "Unable to get your current location."
-              )
-            );
-          },
-
-          {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0,
-          }
-        );
-      }
-    );
+    if (locationRequestRef.current) return locationRequestRef.current;
+    setLocation(null);
+    const requestCollegeId = activeCollegeId;
+    const request = getTenantCollegeProfile(requestCollegeId).then((profile) =>
+      getFreshAttendanceLocation(undefined, profile.gps_accuracy_limit_m)
+    ).then((coordinates) => {
+      setLocation(coordinates);
+      return coordinates;
+    }).finally(() => {
+      if (locationRequestRef.current === request) locationRequestRef.current = null;
+    });
+    locationRequestRef.current = request;
+    return request;
   }
 
 
@@ -395,6 +454,7 @@ export default function StudentAttendance() {
   async function submitAttendance(
     scannedToken = token
   ) {
+    if (attendanceSubmissionRef.current) return;
     if (!selectedSession) {
       setError(
         "Select an active attendance session first."
@@ -414,18 +474,18 @@ export default function StudentAttendance() {
       return;
     }
 
+    attendanceSubmissionRef.current = true;
     try {
       setSubmitting(true);
       setError("");
       setNotice("");
 
-      let coordinates = location;
-
-      if (!coordinates) {
-        coordinates =
-          await getCurrentLocation();
-
+      let coordinates = null;
+      if (selectedSession.latitude != null && selectedSession.longitude != null) {
+        coordinates = await getCurrentLocation();
         setLocation(coordinates);
+      } else {
+        throw new Error("Attendance location is not configured for this session. Ask your College Admin or Teacher to configure the classroom location.");
       }
 
       const result =
@@ -437,7 +497,10 @@ export default function StudentAttendance() {
               coordinates?.latitude ?? null,
             longitude:
               coordinates?.longitude ?? null,
-          }
+            accuracy_m:
+              coordinates?.accuracy ?? null,
+          },
+          activeCollegeId
         );
 
       setNotice(
@@ -449,7 +512,7 @@ export default function StudentAttendance() {
 
       await stopScanner();
 
-      await loadData(true);
+      await loadData(true, true);
 
       const updatedSession =
         sessions.find(
@@ -472,6 +535,7 @@ export default function StudentAttendance() {
         )
       );
     } finally {
+      attendanceSubmissionRef.current = false;
       setSubmitting(false);
     }
   }
@@ -570,10 +634,7 @@ export default function StudentAttendance() {
                 );
               }
             } catch (scanError) {
-              console.error(
-                "QR detection error:",
-                scanError
-              );
+              if (import.meta.env.DEV) console.error("QR detection error:", scanError);
             } finally {
               scanInFlight = false;
             }
@@ -581,10 +642,7 @@ export default function StudentAttendance() {
           500
         );
     } catch (error) {
-      console.error(
-        "Camera start failed:",
-        error
-      );
+      if (import.meta.env.DEV) console.error("Camera start failed:", error);
 
       setScannerActive(false);
 
@@ -668,55 +726,54 @@ export default function StudentAttendance() {
 
 
   async function captureFaceAttendance() {
+    if (attendanceSubmissionRef.current || faceSubmitting) return;
     const video = faceVideoRef.current;
     const canvas = faceCanvasRef.current;
     if ((!faceRegistrationMode && !selectedSession) || !video?.videoWidth || !canvas) {
       setError("Wait for the live camera preview before capturing your face.");
       return;
     }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      setError("Camera capture is unavailable in this browser. Please retry or use QR attendance.");
-      return;
-    }
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
-    if (!blob) {
-      setError("The camera frame could not be captured. Please retry.");
-      return;
-    }
-
+    attendanceSubmissionRef.current = true;
     setFaceSubmitting(true);
     setError("");
     setNotice("");
     try {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        setError("Camera capture is unavailable in this browser. Please retry or use QR attendance.");
+        return;
+      }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (!blob) {
+        setError("The camera frame could not be captured. Please retry.");
+        return;
+      }
+
       const capture = new File([blob], faceRegistrationMode ? "my-face.jpg" : "attendance-face.jpg", { type: "image/jpeg" });
       if (faceRegistrationMode) {
-        const result = await registerMyFace(capture);
+        const result = await registerMyFace(capture, activeCollegeId, faceConsent);
         setFaceStatus(result);
         stopFaceCamera();
         setFaceRegistrationMode(false);
         setNotice("Face registered successfully. You can now mark attendance with face recognition.");
-        await loadData(true);
+        await loadData(true, true);
         return;
       }
-      let coordinates = null;
-      if (selectedSession.latitude != null && selectedSession.longitude != null) {
-        coordinates = await getCurrentLocation();
-      }
       const sessionId = selectedSession.id;
-      const result = await submitStudentFaceAttendance(sessionId, capture, coordinates);
+      const result = await submitStudentFaceAttendance(sessionId, capture, null, activeCollegeId);
       stopFaceCamera();
       setNotice(result?.message || "Face attendance recorded successfully.");
-      await loadData(true);
+      await loadData(true, true);
       setSelectedSession((current) => current && current.id === sessionId
         ? { ...current, already_attended: true }
         : current);
     } catch (captureError) {
       setError(getErrorMessage(captureError, "Face attendance could not be recorded."));
     } finally {
+      attendanceSubmissionRef.current = false;
       setFaceSubmitting(false);
     }
   }
@@ -739,9 +796,8 @@ export default function StudentAttendance() {
             </h1>
 
             <p>
-              Join an active classroom session,
-              verify the dynamic QR and record
-              attendance with location validation.
+            Join an active classroom session. QR attendance verifies your
+            live location; face attendance verifies your registered face.
             </p>
           </div>
 
@@ -749,7 +805,7 @@ export default function StudentAttendance() {
             type="button"
             className="student-attendance-refresh"
             onClick={() =>
-              loadData(true)
+              loadData(true, true)
             }
             disabled={refreshing}
           >
@@ -787,7 +843,7 @@ export default function StudentAttendance() {
         )}
 
 
-        {!faceStatus?.face_registered && (
+        {faceStatusLoadState === "ready" && !faceStatus?.face_registered && (
           <section id="student-face-registration" className="student-face-attendance-card" aria-label="Register face">
             <div className="student-face-attendance-heading">
               <div>
@@ -796,16 +852,17 @@ export default function StudentAttendance() {
               </div>
               {faceCameraActive && faceRegistrationMode && <button type="button" className="student-secondary-button" onClick={() => { stopFaceCamera(); setFaceRegistrationMode(false); }} disabled={faceSubmitting}>Close camera</button>}
             </div>
+            <label><input type="checkbox" checked={faceConsent} onChange={(event) => setFaceConsent(event.target.checked)} /> I consent to storing my face reference for attendance verification.</label>
             {faceCameraActive && faceRegistrationMode ? (
               <div className="student-face-camera-layout">
                 <video ref={faceVideoRef} autoPlay muted playsInline />
                 <canvas ref={faceCanvasRef} hidden />
-                <button type="button" className="student-submit-button" onClick={captureFaceAttendance} disabled={faceSubmitting}>
+                <button type="button" className="student-submit-button" onClick={captureFaceAttendance} disabled={faceSubmitting || !faceConsent}>
                   {faceSubmitting ? "Registering face..." : "Capture and Register Face"}
                 </button>
               </div>
             ) : (
-              <button type="button" className="student-primary-button" onClick={() => { setFaceRegistrationMode(true); startFaceCamera(true); }} disabled={faceSubmitting || loading}>Register My Face</button>
+              <button type="button" className="student-primary-button" onClick={() => { setFaceRegistrationMode(true); startFaceCamera(true); }} disabled={faceSubmitting || loading || !activeCollegeId || !faceConsent}>Register My Face</button>
             )}
           </section>
         )}
@@ -818,11 +875,21 @@ export default function StudentAttendance() {
             </span>
 
             <strong>
-              {stats.percentage.toFixed(2)}%
+              {attendanceHistoryLoadState === "error"
+                ? "Unavailable"
+                : attendanceHistoryLoadState !== "ready"
+                  ? "—"
+                  : records.length === 0
+                    ? "No data"
+                    : `${stats.percentage.toFixed(2)}%`}
             </strong>
 
             <small>
-              Present + late
+              {attendanceHistoryLoadState === "error"
+                ? "Attendance history unavailable"
+                : records.length === 0 && attendanceHistoryLoadState === "ready"
+                  ? "No attendance data yet"
+                  : "Present + late"}
             </small>
           </div>
 
@@ -833,11 +900,11 @@ export default function StudentAttendance() {
             </span>
 
             <strong>
-              {sessions.length}
+              {sessionsLoadState === "error" ? "Unavailable" : sessionsLoadState === "ready" ? sessions.length : "—"}
             </strong>
 
             <small>
-              Sessions currently open
+              {sessionsLoadState === "error" ? "Session data unavailable" : "Sessions currently open"}
             </small>
           </div>
 
@@ -848,11 +915,11 @@ export default function StudentAttendance() {
             </span>
 
             <strong>
-              {stats.present}
+              {attendanceHistoryLoadState === "error" ? "Unavailable" : attendanceHistoryLoadState === "ready" ? stats.present : "—"}
             </strong>
 
             <small>
-              Verified present
+              {attendanceHistoryLoadState === "error" ? "Attendance history unavailable" : "Verified present"}
             </small>
           </div>
 
@@ -863,11 +930,11 @@ export default function StudentAttendance() {
             </span>
 
             <strong>
-              {stats.absent}
+              {attendanceHistoryLoadState === "error" ? "Unavailable" : attendanceHistoryLoadState === "ready" ? stats.absent : "—"}
             </strong>
 
             <small>
-              Recorded absent
+              {attendanceHistoryLoadState === "error" ? "Attendance history unavailable" : "Recorded absent"}
             </small>
           </div>
 
@@ -907,6 +974,10 @@ export default function StudentAttendance() {
           {loading ? (
             <div className="student-attendance-empty">
               Loading active sessions...
+            </div>
+          ) : sessionsLoadState === "error" ? (
+            <div className="student-attendance-empty" role="status">
+              Active sessions are unavailable. Verify your College profile link if requested, then select Refresh.
             </div>
           ) : sessions.length === 0 ? (
             <div className="student-no-session">
@@ -1188,7 +1259,7 @@ export default function StudentAttendance() {
                                 5
                               )}, ${location.longitude.toFixed(
                                 5
-                              )}`
+                              )} · Accuracy ${location.accuracy.toFixed(1)} m`
                             : "Not captured"}
                         </span>
                       </div>
@@ -1260,8 +1331,8 @@ export default function StudentAttendance() {
                   <div className="student-face-attendance-heading">
                     <div>
                       <strong>Face Recognition Attendance</strong>
-                      <p>Registration status: <b className={faceStatus?.face_registered ? "registered" : "not-registered"}>
-                        {faceStatus?.face_registered ? "Registered" : "Not Registered"}
+                <p>Registration status: <b className={faceStatus?.face_registered ? "registered" : "not-registered"}>
+                        {faceStatusLoadState !== "ready" ? faceProfileLinkRequired ? "Verification Required" : "Unavailable" : faceStatus?.face_registered ? "Registered" : "Not Registered"}
                       </b></p>
                     </div>
                     {faceCameraActive && <button type="button" className="student-secondary-button" onClick={stopFaceCamera} disabled={faceSubmitting}>Close camera</button>}
@@ -1276,11 +1347,15 @@ export default function StudentAttendance() {
                     </div>
                   ) : (
                     <div className="student-face-attendance-actions">
-                      <p>{faceStatus?.face_registered
-                        ? "The backend verifies your live capture against your registered face and the active class session."
-                        : "Your face is not registered. Please register your face first."}</p>
+                      <p>{faceStatusLoadState !== "ready"
+                        ? faceProfileLinkRequired
+                          ? "Ask your College Admin to verify your existing Student profile link, then select Refresh."
+                          : "Face registration status is unavailable. Select Refresh to retry."
+                        : faceStatus?.face_registered
+                          ? "The backend verifies your live capture against your registered face and the active class session."
+                          : "Your face is not registered. Please register your face first."}</p>
                       <button type="button" className="student-primary-button" onClick={startFaceCamera}
-                        disabled={!faceStatus?.face_registered || faceSubmitting || submitting || selectedSession.already_attended}>
+                        disabled={faceStatusLoadState !== "ready" || !faceStatus?.face_registered || faceSubmitting || submitting || selectedSession.already_attended}>
                         Open Camera
                       </button>
                     </div>

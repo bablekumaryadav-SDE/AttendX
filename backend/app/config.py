@@ -14,6 +14,12 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:5176",
 )
 
+# Explicit browser API contract. Do not broaden these without a client need.
+ALLOWED_CORS_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+ALLOWED_CORS_HEADERS = ("Authorization", "Content-Type", "Accept")
+# Browser auth uses an explicit Bearer Authorization header, not cookies.
+CORS_ALLOW_CREDENTIALS = False
+
 
 def parse_allowed_origins(value: str | None) -> list[str]:
     """Parse a comma-separated list of explicit HTTP(S) browser origins."""

@@ -14,58 +14,40 @@ import DashboardLayout from "../layouts/DashboardLayout";
 import AuthLayout from "../layouts/AuthLayout";
 
 import LandingPage from "../pages/LandingPage";
+import AboutPage from "../pages/public/AboutPage";
+import FeaturesPage from "../pages/public/FeaturesPage";
+import HowItWorksPage from "../pages/public/HowItWorksPage";
+import FounderPage from "../pages/public/FounderPage";
+import ContactPage from "../pages/public/ContactPage";
+import PrivacyPolicyPage from "../pages/public/PrivacyPolicyPage";
+import TermsPage from "../pages/public/TermsPage";
+import CollegeRegistrationPage from "../pages/public/CollegeRegistrationPage";
+import AccountActivationPage from "../pages/public/AccountActivationPage";
 import Login from "../pages/auth/Login";
-import AdminDashboard from "../pages/auth/admin/AdminDashboard";
+import SuperAdminHome from "../pages/auth/SuperAdminHome";
+import SuperAdminColleges from "../pages/auth/SuperAdminColleges";
+import TenantAdminDashboard from "../pages/auth/admin/TenantAdminDashboard";
 
-import Students from "../pages/auth/admin/Students";
+import TenantStudents from "../pages/auth/admin/TenantStudents";
 import Teachers from "../pages/auth/admin/Teachers";
 import Classes from "../pages/auth/admin/Classes";
 import AcademicManagement from "../pages/auth/admin/AcademicManagement";
-import Notifications from "../pages/auth/admin/Notifications";
+import CollegeSettings from "../pages/auth/admin/CollegeSettings";
+import ParentsNotifications from "../pages/auth/admin/ParentsNotifications";
+import TenantReports from "../pages/auth/admin/TenantReports";
+import FeatureUnavailable from "../pages/FeatureUnavailable";
+import TenantNotificationInbox from "../pages/TenantNotificationInbox";
+import WorkspaceErrorBoundary from "../components/WorkspaceErrorBoundary";
 
-import AttendancePage from "../pages/attendance/AttendancePage";
-import AttendanceMonitor from "../pages/auth/admin/AttendanceMonitor";
-import ReportsPage from "../pages/reports/ReportsPage";
-
+import TenantAttendance from "../pages/auth/admin/TenantAttendance";
 import StudentDashboard from "../pages/student/StudentDashboard";
 import StudentAttendance from "../pages/student/StudentAttendance";
+import StudentReports from "../pages/student/StudentReports";
 
 import TeacherDashboard from "../pages/teacher/TeacherDashboard";
 import TeacherAttendance from "../pages/teacher/TeacherAttendance";
-
-class WorkspaceErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error) {
-    console.error("AttendX workspace render failed:", error);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <main role="alert" className="app-error-fallback">
-          <h1>This page could not be displayed.</h1>
-          <p>Refresh the page to try again. If the problem continues, contact your administrator.</p>
-          {import.meta.env.DEV && this.state.error && (
-            <pre>{String(this.state.error.stack || this.state.error.message || this.state.error)}</pre>
-          )}
-          <button type="button" onClick={() => window.location.reload()}>
-            Refresh page
-          </button>
-        </main>
-      );
-    }
-
-    return this.props.children;
-  }
-}
+import TeacherReports from "../pages/teacher/TeacherReports";
+import ProfilePage from "../pages/ProfilePage";
 
 function HomeRoute() {
   return <LandingPage />;
@@ -79,6 +61,16 @@ function AppRouteContent() {
         element={<HomeRoute />}
       />
 
+      <Route path="/about" element={<AboutPage />} />
+      <Route path="/features" element={<FeaturesPage />} />
+      <Route path="/how-it-works" element={<HowItWorksPage />} />
+      <Route path="/founder" element={<FounderPage />} />
+      <Route path="/contact" element={<ContactPage />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/register-college" element={<CollegeRegistrationPage />} />
+      <Route path="/activate-account" element={<AccountActivationPage />} />
+
       <Route
         path="/login"
         element={
@@ -88,20 +80,40 @@ function AppRouteContent() {
         }
       />
 
+      <Route
+        path="/platform"
+        element={
+          <ProtectedRoute allowedRoles={["super_admin"]}>
+            <SuperAdminHome />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/platform/colleges"
+        element={
+          <ProtectedRoute allowedRoles={["super_admin"]}>
+            <SuperAdminColleges />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Admin workspace */}
       <Route
         path="/admin"
         element={
-          <ProtectedRoute allowedRoles={["admin"]}>
-            <DashboardLayout />
+          <ProtectedRoute allowedRoles={["admin", "college_admin"]}>
+            <WorkspaceErrorBoundary>
+              <DashboardLayout />
+            </WorkspaceErrorBoundary>
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminDashboard />} />
+        <Route index element={<TenantAdminDashboard />} />
 
         <Route
           path="students"
-          element={<Students />}
+          element={<TenantStudents />}
         />
 
         <Route
@@ -116,18 +128,24 @@ function AppRouteContent() {
 
         <Route path="subjects" element={<AcademicManagement />} />
 
-        <Route path="notifications" element={<Notifications />} />
+        <Route path="parents-notifications" element={<ParentsNotifications />} />
+
+        <Route path="settings" element={<CollegeSettings />} />
+
+        <Route path="notifications" element={<TenantNotificationInbox />} />
+
+        <Route path="profile" element={<FeatureUnavailable name="College Admin profile settings" />} />
 
         <Route
           path="attendance"
-          element={<AttendanceMonitor />}
+          element={<TenantAttendance />}
         />
 
-        <Route path="attendance/legacy" element={<AttendancePage />} />
+        <Route path="attendance/legacy" element={<FeatureUnavailable name="Legacy attendance" />} />
 
         <Route
           path="reports"
-          element={<ReportsPage />}
+          element={<TenantReports />}
         />
 
       </Route>
@@ -152,10 +170,11 @@ function AppRouteContent() {
 
         <Route
           path="reports"
-          element={<ReportsPage />}
+          element={<TeacherReports />}
         />
 
-        <Route path="notifications" element={<Notifications />} />
+        <Route path="notifications" element={<TenantNotificationInbox />} />
+        <Route path="profile" element={<ProfilePage profileKind="teacher" />} />
 
       </Route>
 
@@ -164,7 +183,9 @@ function AppRouteContent() {
         path="/student"
         element={
           <ProtectedRoute allowedRoles={["student"]}>
-            <DashboardLayout />
+            <WorkspaceErrorBoundary>
+              <DashboardLayout />
+            </WorkspaceErrorBoundary>
           </ProtectedRoute>
         }
       >
@@ -175,7 +196,11 @@ function AppRouteContent() {
           element={<StudentAttendance />}
         />
 
-        <Route path="notifications" element={<Notifications />} />
+        <Route path="reports" element={<StudentReports />} />
+
+      <Route path="notifications" element={<TenantNotificationInbox />} />
+
+        <Route path="profile" element={<ProfilePage profileKind="student" />} />
 
       </Route>
 

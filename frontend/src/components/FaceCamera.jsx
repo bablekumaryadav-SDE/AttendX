@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { acquireCameraStreamSafely } from "../utils/cameraLifecycle.js";
+import { stopCameraStream } from "../utils/cameraAccess.js";
 import "./FaceCamera.css";
 
 function FaceCamera({
@@ -10,8 +12,11 @@ function FaceCamera({
   captureLabel,
 }) {
   const videoRef = useRef(null);
+  const attachedVideoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const mountedRef = useRef(true);
+  const cameraRequestRef = useRef(0);
 
   const [active, setActive] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -20,30 +25,38 @@ function FaceCamera({
 
   const isAttendance = mode === "attendance";
 
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-
-    setActive(false);
+  const releaseCamera = useCallback(() => {
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
+    const video = videoRef.current || attachedVideoRef.current;
+    if (video) video.srcObject = null;
+    attachedVideoRef.current = null;
   }, []);
 
+  const stopCamera = useCallback(() => {
+    cameraRequestRef.current += 1;
+    releaseCamera();
+    setActive(false);
+    setStarting(false);
+  }, [releaseCamera]);
+
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      stopCamera();
+      mountedRef.current = false;
+      cameraRequestRef.current += 1;
+      releaseCamera();
     };
-  }, [stopCamera]);
+  }, [releaseCamera]);
 
   const startCamera = async () => {
     if (disabled || starting || active) {
       return;
     }
 
+    stopCamera();
+    const requestId = ++cameraRequestRef.current;
+    const isCurrentRequest = () => mountedRef.current && cameraRequestRef.current === requestId;
     setError("");
     setStarting(true);
 
@@ -56,24 +69,20 @@ function FaceCamera({
     }
 
     try {
-      stopCamera();
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: {
-            ideal: 1280,
+      const stream = await acquireCameraStreamSafely({
+        getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
+        isCurrent: isCurrentRequest,
+        constraints: {
+          video: {
+            facingMode: "user",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30, max: 30 },
           },
-          height: {
-            ideal: 720,
-          },
-          frameRate: {
-            ideal: 30,
-            max: 30,
-          },
+          audio: false,
         },
-        audio: false,
       });
+      if (!stream || !isCurrentRequest()) return;
 
       streamRef.current = stream;
 
@@ -83,8 +92,14 @@ function FaceCamera({
         requestAnimationFrame(resolve);
       });
 
+      if (!isCurrentRequest()) {
+        if (streamRef.current === stream) releaseCamera();
+        return;
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        attachedVideoRef.current = videoRef.current;
 
         try {
           await videoRef.current.play();
@@ -93,7 +108,8 @@ function FaceCamera({
         }
       }
     } catch (cameraError) {
-      console.error("Camera error:", cameraError);
+      if (!isCurrentRequest()) return;
+      if (import.meta.env.DEV) console.error("Camera error:", cameraError);
 
       let message =
         "Unable to access the camera. Please allow camera permission.";
@@ -111,8 +127,9 @@ function FaceCamera({
 
       setError(message);
       stopCamera();
-    } finally {
       setStarting(false);
+    } finally {
+      if (isCurrentRequest()) setStarting(false);
     }
   };
 
@@ -194,7 +211,7 @@ function FaceCamera({
         await onCapture(file);
       }
     } catch (captureError) {
-      console.error("Face capture error:", captureError);
+      if (import.meta.env.DEV) console.error("Face capture error:", captureError);
 
       setError(
         captureError?.message ||

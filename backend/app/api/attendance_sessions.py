@@ -6,20 +6,20 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.schemas.attendance import (
-    AttendanceSessionCreate,
-    QRVerifyRequest,
-    ManualAttendanceRequest,
-)
+from app.schemas.attendance import ManualAttendanceRequest
+from app.schemas.attendance_gis import AttendanceSessionGISCreate, QRVerifyGISRequest
 from app.services.attendance_core import (
     build_qr_token,
     ensure_teacher_or_admin,
     get_teacher_for_user,
     haversine_m,
+    get_college_gps_accuracy_limit,
     log_audit,
     new_qr_secret,
+    normalize_session_datetimes,
     utcnow,
     verify_current_qr_token,
+    validate_geofence_fix,
 )
 
 
@@ -66,9 +66,10 @@ def _session(db: Session, session_id: int):
     row = db.execute(
         text(
             """
-            SELECT *
-            FROM attendance_sessions
-            WHERE id = :id
+            SELECT s.*, c.location_name
+            FROM attendance_sessions s
+            JOIN classes c ON c.id = s.class_id
+            WHERE s.id = :id
             """
         ),
         {
@@ -82,7 +83,7 @@ def _session(db: Session, session_id: int):
             detail="Attendance session not found.",
         )
 
-    return row
+    return normalize_session_datetimes(row)
 
 
 def _session_response(row):
@@ -510,7 +511,7 @@ def _finalize_absent_students(
     status_code=status.HTTP_201_CREATED,
 )
 def create_session(
-    body: AttendanceSessionCreate,
+    body: AttendanceSessionGISCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -603,6 +604,14 @@ def create_session(
             ),
         )
 
+    class_location = db.execute(
+        text("SELECT latitude, longitude, radius_m FROM classes WHERE id = :id"),
+        {"id": body.class_id},
+    ).mappings().first()
+    latitude = body.latitude if body.latitude is not None else class_location["latitude"]
+    longitude = body.longitude if body.longitude is not None else class_location["longitude"]
+    radius_m = body.radius_m if body.radius_m is not None else class_location["radius_m"]
+
     now = utcnow()
 
     qr_expires = min(
@@ -655,9 +664,9 @@ def create_session(
             "ends_at": body.ends_at,
             "secret": new_qr_secret(),
             "qr_expires": qr_expires,
-            "lat": body.latitude,
-            "lon": body.longitude,
-            "radius": body.radius_m,
+            "lat": latitude,
+            "lon": longitude,
+            "radius": radius_m,
         },
     )
 
@@ -703,7 +712,8 @@ def list_sessions(
                     s.*,
                     sub.name AS subject_name,
                     c.name AS class_name,
-                    c.section
+                    c.section,
+                    c.location_name
                 FROM attendance_sessions s
                 JOIN subjects sub
                     ON sub.id = s.subject_id
@@ -728,7 +738,8 @@ def list_sessions(
                     s.*,
                     sub.name AS subject_name,
                     c.name AS class_name,
-                    c.section
+                    c.section,
+                    c.location_name
                 FROM attendance_sessions s
                 JOIN subjects sub
                     ON sub.id = s.subject_id
@@ -1015,7 +1026,7 @@ def get_qr(
 )
 def verify_qr(
     session_id: int,
-    body: QRVerifyRequest,
+    body: QRVerifyGISRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -1111,15 +1122,14 @@ def verify_qr(
         row["latitude"] is not None
         and row["longitude"] is not None
     ):
-
-        if distance is None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Location permission is required "
-                    "for this attendance session."
-                ),
-            )
+        accuracy_limit_m = get_college_gps_accuracy_limit(db, row.get("college_id"))
+        validate_geofence_fix(
+            body.latitude,
+            body.longitude,
+            body.accuracy_m,
+            row["radius_m"],
+            accuracy_limit_m=accuracy_limit_m,
+        )
 
         if distance > row["radius_m"]:
             raise HTTPException(

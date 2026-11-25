@@ -1,0 +1,261 @@
+/* AttendX visual layer. This stylesheet changes presentation only. */
+:root {
+  --ax-ink: #17233f;
+  --ax-muted: #69768d;
+  --ax-line: #e4e9f2;
+  --ax-paper: #ffffff;
+  --ax-canvas: #f5f7fc;
+  --ax-brand: #5d55d9;
+  --ax-brand-dark: #4941bd;
+  --ax-navy: #14213d;
+  --ax-success: #167a5a;
+  --ax-danger: #b54747;
+  --ax-radius: 16px;
+  --ax-shadow: 0 12px 32px rgba(23, 35, 63, 0.06);
+  color: var(--ax-ink);
+  background: var(--ax-canvas);
+}
+
+body { background: var(--ax-canvas); color: var(--ax-ink); }
+button, input, select, textarea { font-family: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible {
+  outline: 3px solid rgba(93, 85, 217, .34);
+  outline-offset: 2px;
+}
+
+/* Shared authenticated workspace */
+.app-shell { background: var(--ax-canvas); color: var(--ax-ink); }
+.app-sidebar {
+  background: linear-gradient(180deg, #172544 0%, #111c34 100%);
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.sidebar-brand-mark { border-radius: 13px; background: linear-gradient(145deg, #8179f2, #5148c8); }
+.sidebar-nav { gap: 6px; }
+.sidebar-nav-item { min-height: 46px; border-radius: 11px; }
+.sidebar-nav-item.active { background: linear-gradient(90deg, rgba(111,105,232,.27), rgba(111,105,232,.1)); box-shadow: inset 3px 0 #9994ff; }
+.nav-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; }
+.nav-icon svg { width: 18px; height: 18px; stroke-width: 1.8; }
+.app-header { border-bottom-color: var(--ax-line); background: rgba(255,255,255,.94); }
+.header-left h1 { color: var(--ax-ink); font-weight: 760; }
+.college-selector select { min-height: 38px; border-color: #dce2ed; border-radius: 10px; }
+.notification-button { border-color: var(--ax-line); border-radius: 11px; }
+.user-avatar { background: #ecebff; color: var(--ax-brand-dark); }
+.app-content { padding-top: 32px; }
+.dashboard-page { max-width: 1480px; }
+.admin-dashboard-page, .teacher-dashboard-page, .student-dashboard-page { color: var(--ax-ink); }
+.dashboard-welcome h2 { color: var(--ax-ink); font-size: clamp(25px, 2.4vw, 32px); }
+.date-card, .stat-card, .dashboard-panel {
+  border-color: var(--ax-line);
+  border-radius: var(--ax-radius);
+  box-shadow: var(--ax-shadow);
+}
+.stat-card { transition: transform .18s ease, box-shadow .18s ease; }
+.stat-card:hover { transform: translateY(-2px); box-shadow: 0 16px 35px rgba(23,35,63,.09); }
+.stat-icon { border-radius: 11px; background: #efefff; color: var(--ax-brand); }
+.dashboard-panel { padding: 22px; }
+.panel-header h3 { color: var(--ax-ink); }
+.text-button { color: var(--ax-brand-dark); }
+.ad-header, .td-welcome, .sd-welcome { color: var(--ax-ink); }
+.ad-stat, .ad-card, .td-kpi-card, .td-card, .sd-stat-card, .sd-panel {
+  background-color: var(--ax-paper);
+  border-color: var(--ax-line);
+  border-radius: var(--ax-radius);
+  box-shadow: var(--ax-shadow);
+}
+.ad-table, .td-table, .sd-table { border-color: var(--ax-line); }
+
+/* Shared form and table surfaces; selectors intentionally avoid camera controls. */
+.app-content input:not([type="checkbox"]):not([type="radio"]),
+.app-content select,
+.app-content textarea {
+  border-color: #dce2ed;
+  border-radius: 10px;
+}
+.app-content table { border-color: var(--ax-line); }
+.app-content thead th { color: #64718a; background: #f7f8fc; }
+.app-content tbody tr:hover { background-color: #f8f9ff; }
+
+/* Platform application review and College directory */
+.platform-review-shell { color: var(--ax-ink); }
+.platform-review-header { border-bottom-color: var(--ax-line); }
+.platform-review-header h1 { letter-spacing: -.035em; }
+.platform-application-list, .platform-application-detail {
+  border-color: var(--ax-line); border-radius: var(--ax-radius); box-shadow: var(--ax-shadow);
+}
+.platform-application-list li button { border-radius: 11px; transition: border-color .16s, background .16s, transform .16s; }
+.platform-application-list li button:hover { transform: translateY(-1px); }
+.platform-application-list li .platform-application-selected { border-color: #aaa5f0; background: #f7f6ff; }
+.platform-review-notice { border-radius: 12px; }
+.platform-review-actions button, .platform-header-actions button,
+.platform-search-form button, .platform-college-edit button, .platform-status-editor button {
+  border-radius: 10px; transition: transform .16s ease, box-shadow .16s ease;
+}
+.platform-review-actions button:hover:not(:disabled), .platform-header-actions button:hover,
+.platform-search-form button:hover, .platform-college-edit button:hover,
+.platform-status-editor button:hover { transform: translateY(-1px); box-shadow: 0 7px 16px rgba(73,65,189,.16); }
+.platform-review-error, .platform-review-success { border-radius: 11px; }
+.platform-review-shell .platform-application-list,
+.platform-review-shell .platform-application-detail { padding: clamp(16px, 2vw, 24px); }
+.platform-review-shell input, .platform-review-shell select, .platform-review-shell textarea {
+  border-color: #d9dfeb; border-radius: 10px;
+}
+
+/* Existing student/teacher/class/subject pages */
+.students-page, .teachers-page, .classes-page, .academic-page,
+.teacher-attendance-page, .student-attendance-page { color: var(--ax-ink); }
+.students-header h1, .teachers-hero h1, .classes-header h1, .academic-header h1 { letter-spacing: -.035em; }
+.students-card, .student-stat-card, .student-directory, .teacher-stat, .teacher-directory,
+.teacher-card, .classes-card, .classes-form-card, .academic-card, .ta-card,
+.ad-card, .ad-stat,
+.tenant-student-profile > div {
+  border-color: var(--ax-line); border-radius: 14px;
+}
+.teacher-assignment-panel, .teacher-directory, .classes-container { border-radius: 15px; }
+.teacher-stat, .teacher-directory, .classes-card, .classes-form-card, .academic-card, .ta-card,
+.student-stat-card, .student-session-card, .student-verification-panel, .student-attendance-panel,
+.ad-card, .ad-stat {
+  box-shadow: var(--ax-shadow);
+}
+.academic-table-wrap, .classes-table-wrap, .ad-table-wrap, .sd-table-wrap, .td-table-wrap {
+  border-color: var(--ax-line); border-radius: 12px;
+}
+.teacher-table-wrapper, .teacher-table, .students-page .table-scroll {
+  border-color: var(--ax-line); border-radius: 12px;
+}
+.teacher-table thead th, .academic-table thead th, .classes-table thead th,
+.student-attendance-table thead th, .ad-table thead th, .td-table thead th, .sd-table thead th {
+  background: #f7f8fc; color: #64718a;
+}
+.teacher-stat-grid, .student-stat-grid { gap: 16px; }
+.students-page .student-stat-card, .teachers-page .teacher-stat { transition: transform .18s ease, box-shadow .18s ease; }
+.students-page .student-stat-card:hover, .teachers-page .teacher-stat:hover { transform: translateY(-2px); }
+.teacher-attendance-page .ta-form input,
+.teacher-attendance-page .ta-form select,
+.teacher-attendance-page .ta-form textarea {
+  border-radius: 10px;
+}
+.students-page .students-header, .teachers-page .teachers-hero,
+.classes-page .classes-header, .academic-page .academic-header,
+.student-attendance-header, .ta-header {
+  color: var(--ax-ink);
+}
+.students-page .student-directory, .teachers-page .teacher-directory,
+.classes-page .classes-card, .academic-page .academic-card,
+.student-attendance-panel, .teacher-attendance-page .ta-card {
+  border: 1px solid var(--ax-line);
+  background: var(--ax-paper);
+  box-shadow: var(--ax-shadow);
+}
+.students-page .student-directory, .teachers-page .teacher-directory {
+  overflow: hidden;
+  border-radius: var(--ax-radius);
+}
+.students-page .directory-header, .teachers-page .directory-header,
+.academic-page .academic-toolbar, .classes-page .classes-card-header {
+  border-bottom-color: var(--ax-line);
+}
+.students-page .student-table-wrapper, .teachers-page .teacher-table-wrapper,
+.classes-page .classes-table-wrap, .academic-page .academic-table-wrap,
+.student-attendance-table-wrap, .teacher-attendance-page .attendance-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--ax-line);
+  border-radius: 12px;
+}
+.students-page .student-table, .teachers-page .teacher-table,
+.classes-page .classes-table, .academic-page .academic-table,
+.student-attendance-table, .teacher-attendance-page .attendance-table-wrap table {
+  min-width: 640px;
+}
+.students-page .student-table thead, .teachers-page .teacher-table thead,
+.classes-page .classes-table thead, .academic-page .academic-table thead,
+.student-attendance-table thead, .teacher-attendance-page .attendance-table-wrap thead {
+  background: #f7f8fc;
+}
+.students-page .student-modal, .teachers-page .teacher-modal {
+  border: 1px solid rgba(228,233,242,.9);
+  border-radius: 18px;
+  box-shadow: 0 28px 75px rgba(15, 27, 52, .2);
+}
+.students-page .student-stat-card, .teachers-page .teacher-stat,
+.classes-page .classes-stats > *, .student-attendance-stat {
+  border: 1px solid var(--ax-line);
+  border-radius: 14px;
+  background: linear-gradient(155deg, #fff 0%, #fbfbff 100%);
+}
+.academic-page .academic-form, .classes-page .classes-form-card,
+.students-page .student-detail-section, .teachers-page .assignment-panel {
+  border-color: var(--ax-line);
+  border-radius: 14px;
+}
+.teacher-attendance-page .ta-container, .student-attendance-page .student-attendance-container {
+  max-width: 1460px;
+}
+.teacher-attendance-page .ta-card, .student-attendance-page .student-session-card,
+.student-attendance-page .student-verification-panel,
+.student-attendance-page .student-face-attendance-card {
+  border: 1px solid var(--ax-line);
+  border-radius: var(--ax-radius);
+  box-shadow: var(--ax-shadow);
+}
+.teacher-attendance-page .ta-live-chip, .student-attendance-page .student-session-live,
+.student-attendance-page .student-ready-badge {
+  border-radius: 999px;
+}
+.students-page button, .teachers-page button, .classes-page button,
+.academic-page button, .student-attendance-page button, .teacher-attendance-page button {
+  transition: transform .16s ease, box-shadow .16s ease, background-color .16s ease;
+}
+.students-page button:hover:not(:disabled), .teachers-page button:hover:not(:disabled),
+.classes-page button:hover:not(:disabled), .academic-page button:hover:not(:disabled),
+.student-attendance-page button:hover:not(:disabled), .teacher-attendance-page button:hover:not(:disabled) {
+  box-shadow: 0 6px 15px rgba(23,35,63,.1);
+}
+.sd-panel, .sd-stat-card, .td-card, .td-kpi-card, .ad-card, .ad-stat {
+  border-color: var(--ax-line); border-radius: 16px; box-shadow: var(--ax-shadow);
+}
+.sd-stat-card, .td-kpi-card, .ad-stat { transition: transform .18s ease, box-shadow .18s ease; }
+.sd-stat-card:hover, .td-kpi-card:hover, .ad-stat:hover { transform: translateY(-2px); }
+.sd-primary-button, .td-primary-button, .primary-button, .academic-primary-button {
+  border-radius: 10px;
+}
+.feature-unavailable {
+  max-width: 760px; margin: 36px auto; padding: 30px;
+  border: 1px solid var(--ax-line); border-radius: var(--ax-radius);
+  background: white; box-shadow: var(--ax-shadow);
+}
+
+/* Authentication remains email/password; presentation only. */
+.auth-page { background: #fff; }
+.auth-brand-panel { background-color: var(--ax-navy); }
+.brand-mark { background: linear-gradient(145deg, #8179f2, #5148c8); }
+.login-card { border-radius: 18px; }
+.login-button { border-radius: 11px; background: linear-gradient(135deg, #625be0, #5148c8); }
+.login-button:hover { background: linear-gradient(135deg, #5952d5, #4941bd); }
+
+@media (max-width: 800px) {
+  .app-content { padding: 22px 18px 34px; }
+  .app-header { padding-inline: 18px; }
+  .dashboard-welcome { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 560px) {
+  .app-content { padding: 18px 13px 28px; }
+  .app-header { min-height: 70px; height: auto; padding: 12px 13px; }
+  .header-left { min-width: 0; flex: 1 1 auto; }
+  .header-left > div { min-width: 0; }
+  .header-left h1 { max-width: 38vw; overflow: hidden; font-size: clamp(14px, 4vw, 18px); text-overflow: ellipsis; white-space: nowrap; }
+  .header-right { min-width: 0; flex: 0 1 auto; gap: 7px; }
+  .college-selector { max-width: 30vw; min-width: 0; }
+  .college-selector select { width: 100%; min-width: 0; max-width: 104px; }
+  .notification-button { flex: 0 0 36px; }
+  .dashboard-panel { padding: 16px; }
+  .platform-review-shell { padding-inline: 13px; }
+  .students-page .student-table-wrapper, .teachers-page .teacher-table-wrapper,
+  .classes-page .classes-table-wrap, .academic-page .academic-table-wrap,
+  .student-attendance-table-wrap, .teacher-attendance-page .attendance-table-wrap {
+    max-width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

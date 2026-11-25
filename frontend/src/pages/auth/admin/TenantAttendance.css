@@ -1,0 +1,53 @@
+.tenant-attendance-page { max-width: 1500px; }
+.tenant-attendance-hero { display:flex;align-items:center;justify-content:space-between;gap:24px;margin:0 0 22px;padding:clamp(24px,3vw,36px);border:1px solid #27395a;border-radius:20px;color:#fff;background:radial-gradient(ellipse at 84% 0%,rgba(121,106,229,.28),transparent 42%),linear-gradient(112deg,#172642 0%,#202e4d 68%,#28385b 100%);box-shadow:0 18px 38px rgba(24,38,68,.13); }
+.tenant-attendance-hero .page-eyebrow { color:#bbb7ff; }
+.tenant-attendance-hero h1 { margin:9px 0 7px;color:#fff;font-size:clamp(26px,3vw,36px);letter-spacing:-.045em; }
+.tenant-attendance-hero p { max-width:650px;margin:0;color:#c6cfdf;font-size:12px;line-height:1.7; }
+.tenant-attendance-refresh { display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:41px;flex:0 0 auto;padding:0 14px;border:1px solid rgba(255,255,255,.2);border-radius:10px;background:#fff;color:#273858;font:inherit;font-size:11px;font-weight:800;cursor:pointer; }
+.tenant-attendance-refresh:disabled { opacity:.62;cursor:wait; }
+.tenant-attendance-spin { animation:tenant-attendance-rotate 1s linear infinite; }
+@keyframes tenant-attendance-rotate { to { transform:rotate(360deg); } }
+.tenant-attendance-alert { margin:0 0 14px;padding:12px 14px;border:1px solid #e3e7f0;border-radius:11px;background:#f8f9fd;color:#526078;font-size:12px;line-height:1.6; }
+.tenant-attendance-alert.error { border-color:#efcaca;background:#fff6f5;color:#943f3b; }
+.tenant-attendance-toolbar { display:grid;grid-template-columns:minmax(240px,1fr) auto auto;gap:10px;align-items:center;padding:13px;margin-bottom:13px;border:1px solid #e4e9f2;border-radius:14px;background:#fff;box-shadow:0 8px 24px rgba(23,35,63,.045); }
+.tenant-attendance-search { display:flex;align-items:center;gap:9px;min-width:0;height:40px;padding:0 11px;border:1px solid #e2e7f0;border-radius:9px;background:#fafbfe;color:#8995aa; }
+.tenant-attendance-search:focus-within { border-color:#8983e7;box-shadow:0 0 0 3px rgba(93,85,217,.1); }
+.tenant-attendance-search input { width:100%;min-width:0;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;color:#26344b;font-size:11px; }
+.tenant-attendance-filter { display:flex;align-items:center;gap:7px;min-height:40px;padding:0 10px;border:1px solid #e2e7f0;border-radius:9px;color:#77839a;font-size:10px;font-weight:750; }
+.tenant-attendance-filter svg { flex:0 0 auto;color:#7770dc; }
+.tenant-attendance-filter select,.tenant-attendance-filter input { min-width:0;max-width:165px;min-height:32px;padding:4px 6px;border:0!important;background:transparent;color:#27364e;font-size:10px; }
+.tenant-attendance-results { display:flex;align-items:baseline;gap:6px;margin:0 2px 9px;color:#8490a4;font-size:10px; }
+.tenant-attendance-results strong { color:#263550;font-size:13px; }
+.tenant-attendance-table-card { overflow:hidden;border:1px solid #e4e9f2;border-radius:15px;background:#fff;box-shadow:0 10px 28px rgba(23,35,63,.05); }
+.tenant-attendance-table-wrap { width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch; }
+.tenant-attendance-table { width:100%;min-width:930px;border-collapse:collapse;text-align:left; }
+.tenant-attendance-table th { padding:13px 14px;border-bottom:1px solid #e9edf4;background:#f8f9fc;color:#78859a;font-size:8px;font-weight:850;letter-spacing:.09em;text-transform:uppercase;white-space:nowrap; }
+.tenant-attendance-table td { max-width:220px;padding:14px;border-bottom:1px solid #eef1f6;color:#58667d;font-size:10px;overflow-wrap:anywhere; }
+.tenant-attendance-table tbody tr:last-child td { border-bottom:0; }
+.tenant-attendance-table tbody tr:hover { background:#fafaff; }
+.tenant-attendance-table td strong { color:#27364e;font-size:10px; }
+.tenant-attendance-record-id { color:#7770dc;font-weight:800;font-variant-numeric:tabular-nums; }
+.tenant-attendance-status,.tenant-attendance-source { display:inline-flex;align-items:center;min-height:24px;padding:4px 8px;border-radius:999px;font-size:8px;font-weight:850;white-space:nowrap; }
+.tenant-attendance-status.present { background:#eaf8f1;color:#227755; }
+.tenant-attendance-status.late { background:#fff4e4;color:#946520; }
+.tenant-attendance-status.absent { background:#fff0ef;color:#a84b46; }
+.tenant-attendance-status.excused { background:#edf4ff;color:#466eaa; }
+.tenant-attendance-status.unknown { background:#f0f2f6;color:#6e788b; }
+.tenant-attendance-source.verified { background:#f0efff;color:#5d55c5; }
+.tenant-attendance-source.legacy { background:#f2f4f7;color:#6e788b; }
+.tenant-attendance-view { display:inline-flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid #e4e7f0;border-radius:8px;background:#fff;color:#5b55c6;font-size:9px;font-weight:800;cursor:pointer; }
+.tenant-attendance-view:hover { border-color:#c9c5f4;background:#f8f7ff; }
+.tenant-attendance-state { display:flex;align-items:center;justify-content:center;min-height:90px;padding:20px;color:#6f7b90;font-size:11px; }
+.tenant-attendance-state.empty { flex-direction:column;gap:6px;min-height:210px;text-align:center; }
+.tenant-attendance-state.empty strong { color:#344258;font-size:13px; }
+.tenant-attendance-state.empty>span:last-child { color:#8b97aa;font-size:10px; }
+.tenant-attendance-empty-icon { display:grid;place-items:center;width:38px;height:38px;margin-bottom:4px;border-radius:12px;background:#f0efff;color:#655ed0; }
+.tenant-attendance-detail { margin-top:18px;padding:20px;border:1px solid #e4e9f2;border-radius:15px;background:#fff;box-shadow:0 10px 28px rgba(23,35,63,.05); }
+.tenant-attendance-detail-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:14px; }
+.tenant-attendance-detail-heading>div>span { color:#7770dc;font-size:8px;font-weight:850;letter-spacing:.14em; }
+.tenant-attendance-detail h2 { margin:5px 0 14px;color:#1d2c48;font-size:17px;letter-spacing:-.025em; }
+.tenant-attendance-detail-heading button { display:grid;place-items:center;width:34px;height:34px;border:1px solid #e2e7f0;border-radius:9px;background:#fff;color:#59667a;cursor:pointer; }
+.tenant-attendance-detail>p { display:flex;align-items:center;gap:12px;margin:0; }
+.tenant-attendance-detail-date { color:#6f7b90;font-size:11px; }
+@media(max-width:760px){.tenant-attendance-hero{align-items:flex-start;flex-direction:column;padding:23px}.tenant-attendance-toolbar{grid-template-columns:1fr 1fr}.tenant-attendance-search{grid-column:1/-1}.tenant-attendance-filter{min-width:0}.tenant-attendance-filter select,.tenant-attendance-filter input{max-width:none;flex:1}}
+@media(max-width:480px){.tenant-attendance-hero{padding:20px}.tenant-attendance-refresh{width:100%}.tenant-attendance-toolbar{grid-template-columns:1fr;padding:10px}.tenant-attendance-search{grid-column:auto}.tenant-attendance-filter{justify-content:space-between}.tenant-attendance-table{min-width:850px}.tenant-attendance-detail{padding:15px}}

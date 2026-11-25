@@ -27,7 +27,11 @@ export default function Login() {
         .trim()
         .toLowerCase();
 
-      if (role === "admin") {
+      if (role === "super_admin") {
+        navigate("/platform", { replace: true });
+      } else if (role === "admin") {
+        navigate("/admin", { replace: true });
+      } else if (role === "college_admin") {
         navigate("/admin", { replace: true });
       } else if (role === "teacher") {
         navigate("/teacher", { replace: true });

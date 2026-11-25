@@ -1,5 +1,7 @@
-import api from "./api";
-import { getApiErrorMessage } from "../utils/errors";
+import api from "./api.js";
+import { getApiErrorMessage } from "../utils/errors.js";
+
+const currentUserRequests = new Map();
 
 // ============================================================
 // LOGIN
@@ -32,7 +34,7 @@ export async function loginUser(email, password) {
 
     if (error.request) {
       throw new Error(
-        "Backend se response nahi mila. Backend server, API URL aur CORS check karein."
+        error.userMessage || "Backend se response nahi mila. Backend server, API URL aur CORS check karein."
       );
     }
 
@@ -44,30 +46,39 @@ export async function loginUser(email, password) {
 // CURRENT USER
 // ============================================================
 
-export async function getCurrentUser(token) {
+export function getCurrentUser(token) {
   if (!token) {
-    throw new Error("Authentication token nahi mila.");
+    return Promise.reject(new Error("Authentication token nahi mila."));
   }
 
-  try {
-    const response = await api.get("/auth/me", {
+  const pending = currentUserRequests.get(token);
+  if (pending) return pending;
+
+  const request = api.get("/auth/me", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
+      preserveAuthorization: true,
+    })
+    .then((response) => response.data)
+    .catch((error) => {
+      if (error.response) {
+        throw new Error(getApiErrorMessage(error, `User details load nahi hue. HTTP status: ${error.response.status}`));
+      }
+
+      if (error.request) {
+        throw new Error(
+          "Backend se response nahi mila. API connection check karein."
+        );
+      }
+
+      throw error;
     });
+  currentUserRequests.set(token, request);
+  const clearRequest = () => {
+    if (currentUserRequests.get(token) === request) currentUserRequests.delete(token);
+  };
+  request.then(clearRequest, clearRequest);
 
-    return response.data;
-  } catch (error) {
-    if (error.response) {
-      throw new Error(getApiErrorMessage(error, `User details load nahi hue. HTTP status: ${error.response.status}`));
-    }
-
-    if (error.request) {
-      throw new Error(
-        "Backend se response nahi mila. API connection check karein."
-      );
-    }
-
-    throw error;
-  }
+  return request;
 }

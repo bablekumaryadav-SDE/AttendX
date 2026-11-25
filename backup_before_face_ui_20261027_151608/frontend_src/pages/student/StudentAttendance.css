@@ -1,0 +1,938 @@
+.student-attendance-page {
+  min-height: 100%;
+  padding: 34px;
+  background: #f6f7fb;
+  color: #101828;
+}
+
+.student-attendance-container {
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.student-attendance-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.student-attendance-eyebrow {
+  margin-bottom: 8px;
+  color: #635bff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.student-attendance-header h1 {
+  margin: 0;
+  font-size: 32px;
+  letter-spacing: -0.04em;
+}
+
+.student-attendance-header p {
+  max-width: 760px;
+  margin: 10px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.student-attendance-refresh {
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 11px 15px;
+  background: #fff;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.student-attendance-refresh:hover {
+  background: #f9fafb;
+}
+
+.student-attendance-refresh:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.student-attendance-alert {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border-radius: 11px;
+  font-size: 11px;
+}
+
+.student-attendance-alert strong {
+  white-space: nowrap;
+}
+
+.student-attendance-alert.error {
+  border: 1px solid #fecdca;
+  background: #fff1f3;
+  color: #b42318;
+}
+
+.student-attendance-alert.success {
+  border: 1px solid #abefc6;
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.student-attendance-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.student-attendance-stat {
+  min-height: 130px;
+  padding: 20px;
+  border: 1px solid #eaecf0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.035);
+}
+
+.student-attendance-stat.highlight {
+  border-color: #d9d6fe;
+}
+
+.student-attendance-stat span {
+  display: block;
+  color: #98a2b3;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+
+.student-attendance-stat strong {
+  display: block;
+  margin-top: 12px;
+  font-size: 29px;
+  letter-spacing: -0.05em;
+}
+
+.student-attendance-stat small {
+  display: block;
+  margin-top: 5px;
+  color: #667085;
+  font-size: 10px;
+}
+
+
+/* ============================================================
+   LIVE ATTENDANCE
+   ============================================================ */
+
+.student-live-attendance {
+  margin-bottom: 16px;
+  border: 1px solid #eaecf0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.035);
+  overflow: hidden;
+}
+
+.student-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 21px;
+  border-bottom: 1px solid #f2f4f7;
+}
+
+.student-section-kicker {
+  color: #98a2b3;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.student-section-heading h2 {
+  margin: 5px 0 0;
+  font-size: 19px;
+  letter-spacing: -0.03em;
+}
+
+.student-section-heading p {
+  margin: 5px 0 0;
+  color: #667085;
+  font-size: 11px;
+}
+
+.student-verification-chain {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.student-verification-chain span {
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f2f4f7;
+  color: #344054;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.student-verification-chain b {
+  color: #98a2b3;
+  font-size: 10px;
+}
+
+.student-session-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 11px;
+  padding: 17px;
+}
+
+.student-session-card {
+  position: relative;
+  min-height: 190px;
+  padding: 16px;
+  border: 1px solid #eaecf0;
+  border-radius: 13px;
+  background: #fff;
+  color: #101828;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.student-session-card:hover {
+  border-color: #c7c4ff;
+  box-shadow: 0 7px 20px rgba(16, 24, 40, 0.06);
+  transform: translateY(-1px);
+}
+
+.student-session-card.selected {
+  border-color: #7a73ff;
+  box-shadow: 0 0 0 3px rgba(99, 91, 255, 0.08);
+}
+
+.student-session-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.student-session-live,
+.student-session-done {
+  padding: 5px 7px;
+  border-radius: 999px;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+}
+
+.student-session-live {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.student-session-done {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.student-session-card > strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-session-card > span,
+.student-session-card > small {
+  display: block;
+  overflow: hidden;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-session-card > small {
+  color: #98a2b3;
+}
+
+.student-session-time {
+  position: absolute;
+  right: 16px;
+  bottom: 15px;
+  left: 16px;
+  padding-top: 11px;
+  border-top: 1px solid #f2f4f7;
+  color: #344054;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+
+/* ============================================================
+   NO SESSION
+   ============================================================ */
+
+.student-no-session {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin: 17px;
+  padding: 20px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 13px;
+  background: #fcfcfd;
+}
+
+.student-no-session-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 19px;
+}
+
+.student-no-session strong {
+  display: block;
+  font-size: 12px;
+}
+
+.student-no-session p {
+  margin: 5px 0 0;
+  color: #98a2b3;
+  font-size: 10px;
+}
+
+
+/* ============================================================
+   VERIFICATION PANEL
+   ============================================================ */
+
+.student-verification-panel {
+  margin: 0 17px 17px;
+  border: 1px solid #eaecf0;
+  border-radius: 14px;
+  background: #fcfcfd;
+  overflow: hidden;
+}
+
+.student-verification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+  border-bottom: 1px solid #eaecf0;
+}
+
+.student-verification-header h3 {
+  margin: 5px 0 0;
+  font-size: 15px;
+}
+
+.student-verification-header p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 10px;
+}
+
+.student-ready-badge,
+.student-recorded-badge {
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.student-ready-badge {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.student-recorded-badge {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.student-verification-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  padding: 17px;
+}
+
+.student-scanner-card,
+.student-submit-card {
+  padding: 17px;
+  border: 1px solid #eaecf0;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.student-scanner-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 13px;
+}
+
+.student-scanner-title strong {
+  font-size: 12px;
+}
+
+.student-scanner-title span {
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+
+/* ============================================================
+   CAMERA
+   ============================================================ */
+
+.student-camera {
+  position: relative;
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 13px;
+  background: #101828;
+}
+
+.student-camera video {
+  width: 100%;
+  height: 280px;
+  object-fit: cover;
+}
+
+.student-camera-idle {
+  display: grid;
+  place-items: center;
+  gap: 9px;
+  color: #fff;
+}
+
+.student-camera-idle div {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 17px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.student-camera-idle span {
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.student-scan-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 185px;
+  height: 185px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 18px;
+  transform: translate(-50%, -50%);
+}
+
+.student-scan-frame::before,
+.student-scan-frame::after {
+  position: absolute;
+  content: "";
+}
+
+.student-scan-frame::before {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: inherit;
+}
+
+.student-scan-frame span {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  height: 2px;
+  background: #fff;
+  opacity: 0.75;
+  animation: scanLine 1.8s ease-in-out infinite;
+}
+
+@keyframes scanLine {
+  0% {
+    top: 12px;
+  }
+
+  50% {
+    top: calc(100% - 14px);
+  }
+
+  100% {
+    top: 12px;
+  }
+}
+
+.student-scanner-actions {
+  margin-top: 11px;
+}
+
+.student-primary-button,
+.student-secondary-button,
+.student-submit-button,
+.student-location-button {
+  border: 0;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.student-primary-button {
+  width: 100%;
+  padding: 11px;
+  background: #111827;
+  color: #fff;
+}
+
+.student-secondary-button {
+  width: 100%;
+  padding: 11px;
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.student-primary-button:disabled,
+.student-secondary-button:disabled,
+.student-submit-button:disabled,
+.student-location-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.student-scanner-warning {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  background: #fffaeb;
+  color: #b54708;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+
+/* ============================================================
+   SUBMIT / LOCATION
+   ============================================================ */
+
+.student-token-label {
+  display: grid;
+  gap: 7px;
+  color: #344054;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.student-token-label textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 100px;
+  resize: vertical;
+  border: 1px solid #d0d5dd;
+  border-radius: 9px;
+  padding: 10px;
+  outline: none;
+  background: #fff;
+  color: #101828;
+  font-family: monospace;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.student-token-label textarea:focus {
+  border-color: #7a73ff;
+  box-shadow: 0 0 0 3px rgba(99, 91, 255, 0.08);
+}
+
+.student-location-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 11px;
+  padding: 11px;
+  border: 1px dashed #d0d5dd;
+  border-radius: 10px;
+}
+
+.student-location-box strong,
+.student-location-box span {
+  display: block;
+}
+
+.student-location-box strong {
+  color: #344054;
+  font-size: 10px;
+}
+
+.student-location-box span {
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.student-location-button {
+  padding: 8px 10px;
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.student-geofence-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f5f3ff;
+  color: #5925dc;
+  font-size: 9px;
+}
+
+.student-submit-button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  background: #101828;
+  color: #fff;
+}
+
+.student-security-note {
+  margin: 10px 0 0;
+  color: #98a2b3;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.student-already-recorded {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin: 17px;
+  padding: 17px;
+  border: 1px solid #abefc6;
+  border-radius: 11px;
+  background: #ecfdf3;
+}
+
+.student-success-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #12b76a;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.student-already-recorded strong {
+  display: block;
+  color: #027a48;
+  font-size: 11px;
+}
+
+.student-already-recorded span {
+  display: block;
+  margin-top: 4px;
+  color: #667085;
+  font-size: 9px;
+}
+
+
+/* ============================================================
+   HISTORY
+   ============================================================ */
+
+.student-attendance-panel {
+  border: 1px solid #eaecf0;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(16, 24, 40, 0.035);
+  overflow: hidden;
+}
+
+.student-attendance-panel-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 21px;
+  border-bottom: 1px solid #f2f4f7;
+}
+
+.student-attendance-panel-kicker {
+  color: #98a2b3;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.student-attendance-panel-header h2 {
+  margin: 5px 0 0;
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.student-attendance-panel-header p {
+  margin: 5px 0 0;
+  color: #667085;
+  font-size: 10px;
+}
+
+.student-attendance-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.student-attendance-filters button {
+  border: 1px solid #eaecf0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #667085;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.student-attendance-filters button.active {
+  border-color: #101828;
+  background: #101828;
+  color: #fff;
+}
+
+.student-attendance-table-wrap {
+  overflow-x: auto;
+}
+
+.student-attendance-table {
+  width: 100%;
+  min-width: 850px;
+  border-collapse: collapse;
+}
+
+.student-attendance-table th,
+.student-attendance-table td {
+  padding: 14px 17px;
+  border-bottom: 1px solid #f2f4f7;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.student-attendance-table th {
+  background: #fcfcfd;
+  color: #98a2b3;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.student-attendance-table td {
+  color: #475467;
+  font-size: 10px;
+}
+
+.student-attendance-subject strong,
+.student-attendance-class strong {
+  display: block;
+  color: #101828;
+  font-size: 11px;
+}
+
+.student-attendance-subject span,
+.student-attendance-class span {
+  display: block;
+  margin-top: 4px;
+  color: #98a2b3;
+  font-size: 9px;
+}
+
+.attendance-method {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  color: #475467;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.student-status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.student-status.present {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.student-status.late {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.student-status.absent {
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.student-status.unknown {
+  background: #f2f4f7;
+  color: #667085;
+}
+
+.student-attendance-empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  padding: 30px;
+  color: #98a2b3;
+  font-size: 10px;
+  text-align: center;
+}
+
+.student-attendance-empty strong {
+  color: #475467;
+  font-size: 12px;
+}
+
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 1100px) {
+  .student-session-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .student-verification-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .student-attendance-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .student-attendance-page {
+    padding: 20px;
+  }
+
+  .student-attendance-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .student-attendance-header h1 {
+    font-size: 27px;
+  }
+
+  .student-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .student-session-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-attendance-panel-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 500px) {
+  .student-attendance-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .student-verification-chain {
+    width: 100%;
+  }
+
+  .student-verification-chain span {
+    flex: 1;
+    text-align: center;
+  }
+
+  .student-verification-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .student-location-box {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .student-location-button {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .student-session-card {
+    transition: none;
+  }
+
+  .student-scan-frame span {
+    animation: none;
+  }
+}

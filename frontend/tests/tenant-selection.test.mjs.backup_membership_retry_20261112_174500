@@ -1,0 +1,166 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import api from "../src/services/api.js";
+import { createSubject, deactivateSubject, getSubject, getSubjects, updateSubject } from "../src/services/academic.js";
+import { getSubjects as getTeacherSubjects } from "../src/services/teachers.js";
+
+import {
+  confirmedSelectionChange,
+  createLatestRequestGuard,
+  createSingleFlight,
+  getSingleFlightForIdentity,
+  membershipLoadMessage,
+  requireSelectedCollegeId,
+  selectedCollegeParams,
+  subjectLoadMessage,
+  resolveConfirmedCollege,
+  tenantViewKey,
+} from "../src/services/tenantSelection.js";
+
+const memberships = [
+  { college_id: 41, college_name: "North College", membership_role: "teacher" },
+  { college_id: 42, college_name: "South College", membership_role: "student" },
+];
+
+test("no membership and multiple memberships without a persisted choice require explicit selection", () => {
+  assert.equal(resolveConfirmedCollege([], null), null);
+  assert.equal(resolveConfirmedCollege(memberships, null), null);
+});
+
+test("one server-confirmed membership may be selected automatically", () => {
+  assert.equal(resolveConfirmedCollege([memberships[0]], null), "41");
+});
+
+test("a persisted selection is used only when it appears in the server membership list", () => {
+  assert.equal(resolveConfirmedCollege(memberships, "42"), "42");
+  assert.equal(resolveConfirmedCollege(memberships, "999"), null);
+});
+
+test("selection changes accept only confirmed membership IDs", () => {
+  assert.deepEqual(confirmedSelectionChange("41", "42", memberships), { selectedId: "42", changed: true });
+  assert.deepEqual(confirmedSelectionChange("41", "999", memberships), { selectedId: "41", changed: false });
+});
+
+test("tenant view keys change with College so React remounts and clears prior scoped state", () => {
+  assert.notEqual(tenantViewKey("41"), tenantViewKey("42"));
+  assert.notEqual(tenantViewKey("41"), tenantViewKey(null));
+});
+
+test("overlapping membership loads share one in-flight request per session key", async () => {
+  const runOnce = createSingleFlight();
+  let calls = 0;
+  let release;
+  const operation = () => {
+    calls += 1;
+    return new Promise((resolve) => { release = resolve; });
+  };
+  const first = runOnce("session-a", operation);
+  const duplicate = runOnce("session-a", operation);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release([{ college_id: 41 }]);
+  assert.deepEqual(await first, [{ college_id: 41 }]);
+  assert.deepEqual(await duplicate, [{ college_id: 41 }]);
+});
+
+test("AuthContext membership requests deduplicate StrictMode retries for one identity", async () => {
+  const requestRef = { current: null };
+  let calls = 0;
+  const operation = async () => { calls += 1; return [{ college_id: 41 }]; };
+  const first = getSingleFlightForIdentity(requestRef, "user-1", operation);
+  const repeatedSetup = getSingleFlightForIdentity(requestRef, "user-1", operation);
+  assert.equal(first, repeatedSetup);
+  assert.deepEqual(await first.promise, [{ college_id: 41 }]);
+  assert.equal(calls, 1);
+  const nextUser = getSingleFlightForIdentity(requestRef, "user-2", operation);
+  await nextUser.promise;
+  assert.equal(calls, 2);
+});
+
+test("a stale Subject response is rejected after a newer load or College unmount", () => {
+  const guard = createLatestRequestGuard();
+  const firstCollegeRequest = guard.begin();
+  const secondRequest = guard.begin();
+  assert.equal(guard.isCurrent(firstCollegeRequest), false);
+  assert.equal(guard.isCurrent(secondRequest), true);
+  guard.invalidate();
+  assert.equal(guard.isCurrent(secondRequest), false);
+});
+
+test("Subject requests require a valid selected College ID", () => {
+  assert.equal(requireSelectedCollegeId("42"), 42);
+  for (const value of [null, "", "0", "-1", "abc", "9".repeat(400)]) {
+    assert.throws(() => requireSelectedCollegeId(value), { code: "COLLEGE_SELECTION_REQUIRED" });
+  }
+});
+
+test("list and detail request configuration carries the selected College selector", () => {
+  assert.deepEqual(selectedCollegeParams("42"), { params: { college_id: 42 } });
+});
+
+test("membership errors distinguish authentication, access, ambiguity, and unavailable schema", () => {
+  assert.match(membershipLoadMessage(401), /session expired/i);
+  assert.match(membershipLoadMessage(403), /no active College membership/i);
+  assert.match(membershipLoadMessage(409), /Choose one College/i);
+  assert.match(membershipLoadMessage(503), /schema is unavailable/i);
+});
+
+test("Subject read errors distinguish authentication, membership, ambiguity and unavailable schema", () => {
+  assert.match(subjectLoadMessage(401), /session expired/i);
+  assert.match(subjectLoadMessage(403), /active membership/i);
+  assert.match(subjectLoadMessage(409), /Select one active College/i);
+  assert.match(subjectLoadMessage(503), /catalog is temporarily unavailable/i);
+});
+
+test("Subject services use the selected College for reads and writes", async () => {
+  const calls = [];
+  const oldAdapter = api.defaults.adapter;
+  const oldStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: (key) => key === "attendx_token" ? "synthetic-token" : null };
+  api.defaults.adapter = async (config) => {
+    calls.push({ method: config.method, url: config.url, collegeId: config.params?.college_id });
+    return { data: [], status: 200, statusText: "OK", headers: {}, config };
+  };
+  try {
+    await getSubjects(41);
+    await getSubject(801, 42);
+    await getTeacherSubjects(43);
+    await createSubject({ name: "Math", code: "MATH" }, 44);
+    await updateSubject(802, { name: "Physics" }, 45);
+    await deactivateSubject(803, 46);
+    assert.deepEqual(calls, [
+      { method: "get", url: "/subjects/", collegeId: 41 },
+      { method: "get", url: "/subjects/801", collegeId: 42 },
+      { method: "get", url: "/subjects/", collegeId: 43 },
+      { method: "post", url: "/subjects/", collegeId: 44 },
+      { method: "patch", url: "/subjects/802", collegeId: 45 },
+      { method: "delete", url: "/subjects/803", collegeId: 46 },
+    ]);
+    await assert.rejects(getSubjects(null), { code: "COLLEGE_SELECTION_REQUIRED" });
+    await assert.rejects(createSubject({ name: "No tenant", code: "NONE" }, null), { code: "COLLEGE_SELECTION_REQUIRED" });
+    assert.equal(calls.length, 6);
+  } finally {
+    api.defaults.adapter = oldAdapter;
+    if (oldStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = oldStorage;
+  }
+});
+
+test("Subject UI exposes writes only behind the selected College Admin membership", async () => {
+  const source = await readFile(new URL("../src/pages/auth/admin/AcademicManagement.jsx", import.meta.url), "utf8");
+  assert.match(source, /membership\.membership_role === "college_admin"/);
+  assert.match(source, /createSubject\(payload, activeCollegeId\)/);
+  assert.match(source, /updateSubject\(editingId, payload, activeCollegeId\)/);
+  assert.match(source, /deactivateSubject\(subjectId, activeCollegeId\)/);
+  assert.match(source, /requestGuard\.current\.invalidate\(\)/);
+});
+
+test("Subject writes use selected College parameters and shared API client", async () => {
+  const academic = await readFile(new URL("../src/services/academic.js", import.meta.url), "utf8");
+  const teachers = await readFile(new URL("../src/services/teachers.js", import.meta.url), "utf8");
+  assert.match(academic, /api\.post\("\/subjects\/", payload, selectedCollegeParams\(collegeId\)\)/);
+  assert.match(academic, /api\.patch\(`\/subjects\/\$\{Number\(id\)\}`, payload, selectedCollegeParams\(collegeId\)\)/);
+  assert.match(academic, /api\.delete\(`\/subjects\/\$\{Number\(id\)\}`, selectedCollegeParams\(collegeId\)\)/);
+  assert.doesNotMatch(teachers, /function\s+(?:createSubject|updateSubject|deleteSubject)\b/);
+});

@@ -2,10 +2,11 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import {
   Activity,
@@ -22,16 +23,13 @@ import {
 import { useAuth } from "../../context/AuthContext";
 
 import {
-  getAttendanceSessions,
-} from "../../services/attendance";
-
-import {
-  getTeacherDashboard,
-  getAnalyticsOverview,
-} from "../../services/dashboard";
+  getTenantAttendanceSessions,
+  getTenantTeacherAssignments,
+  getTenantTeacherAttendanceSummary,
+} from "../../services/tenantAttendanceSessions";
 
 import "./TeacherDashboard.css";
-import { getApiErrorMessage } from "../../utils/errors";
+import { getApiErrorMessage, uniqueApiErrorMessages } from "../../utils/errors";
 
 function asArray(value, keys = []) {
   if (Array.isArray(value)) return value;
@@ -46,6 +44,16 @@ function asArray(value, keys = []) {
 }
 
 function getErrorMessage(error, fallback) {
+  if (!error?.response && (error?.code === "ERR_NETWORK" || error?.message === "Network Error")) {
+    return "AttendX could not reach the backend. Check the connection and retry.";
+  }
+  if (
+    Number(error?.response?.status) === 403
+    && String(error?.response?.data?.detail || "").trim()
+      === "An active, verified Teacher profile link is required in this College."
+  ) {
+    return "Your Teacher account needs an active, verified profile link in this College. Ask your College Admin to verify the correct existing account-to-profile link, then select Refresh.";
+  }
   return getApiErrorMessage(error, fallback);
 }
 
@@ -65,18 +73,64 @@ function formatDateTime(value) {
 }
 
 export default function TeacherDashboard() {
-  const { user } = useAuth();
+  const { user, activeCollegeId } = useAuth();
+  const authenticatedUserId = user?.user_id ?? user?.id;
+  const location = useLocation();
 
   const [profile, setProfile] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [assignments, setAssignments] = useState([]);
   const [overview, setOverview] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [assignmentsAvailable, setAssignmentsAvailable] = useState(false);
+  const [sessionsAvailable, setSessionsAvailable] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [dataScope, setDataScope] = useState(null);
+  const requestVersion = useRef(0);
+  const inFlightDashboardRef = useRef(null);
+  const authorizationBlockedScopeRef = useRef(null);
+  const authorizationScopeRef = useRef(null);
+  const dataScopeRef = useRef(null);
+  const lastAutoRefreshAtRef = useRef(0);
 
-  const loadDashboard = useCallback(async (silent = false) => {
+  const loadDashboard = useCallback(async (silent = false, explicitAuthorizationRetry = false) => {
+    const version = ++requestVersion.current;
+    const requestScope = `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+    if (authorizationScopeRef.current !== requestScope) {
+      authorizationScopeRef.current = requestScope;
+      authorizationBlockedScopeRef.current = null;
+    }
+    if (authorizationBlockedScopeRef.current === requestScope && !explicitAuthorizationRetry) return;
+    if (explicitAuthorizationRetry && authorizationBlockedScopeRef.current === requestScope) {
+      authorizationBlockedScopeRef.current = null;
+    }
+    if (!activeCollegeId) {
+      setProfile(null);
+      setSessions([]);
+      setAssignments([]);
+      setOverview(null);
+      setAssignmentsAvailable(false);
+      setSessionsAvailable(false);
+      setDataScope(null);
+      dataScopeRef.current = null;
+      setError("Select an active College membership to view your Teacher workspace.");
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    if (dataScopeRef.current !== requestScope) {
+      setProfile(null);
+      setSessions([]);
+      setAssignments([]);
+      setOverview(null);
+      setAssignmentsAvailable(false);
+      setSessionsAvailable(false);
+      setLastUpdated(null);
+      setDataScope(null);
+    }
     if (silent) {
       setRefreshing(true);
     } else {
@@ -85,105 +139,105 @@ export default function TeacherDashboard() {
 
     setError("");
 
-    const [
-      profileResult,
-      sessionsResult,
-      overviewResult,
-    ] = await Promise.allSettled([
-      getTeacherDashboard(),
-      getAttendanceSessions(),
-      getAnalyticsOverview(),
+    const pending = inFlightDashboardRef.current?.scope === requestScope
+      ? inFlightDashboardRef.current.promise
+      : null;
+    const request = pending || Promise.allSettled([
+      getTenantTeacherAttendanceSummary(activeCollegeId, authenticatedUserId, { retryAuthorization: explicitAuthorizationRetry }),
+      getTenantTeacherAssignments(activeCollegeId, authenticatedUserId, { retryAuthorization: explicitAuthorizationRetry }),
+      getTenantAttendanceSessions(activeCollegeId, authenticatedUserId, { retryAuthorization: explicitAuthorizationRetry }),
     ]);
-
-    if (profileResult.status === "fulfilled") {
-      setProfile(profileResult.value || null);
-    } else {
-      setProfile(null);
+    if (!pending) inFlightDashboardRef.current = { scope: requestScope, promise: request };
+    let results;
+    try {
+      results = await request;
+    } finally {
+      if (inFlightDashboardRef.current?.promise === request) inFlightDashboardRef.current = null;
+    }
+    if (version !== requestVersion.current) return;
+    const [summaryResult, assignmentsResult, sessionsResult] = results;
+    if ([summaryResult, assignmentsResult, sessionsResult].some((result) =>
+      result.status === "rejected" && Number(result.reason?.response?.status) === 403
+    )) {
+      authorizationBlockedScopeRef.current = requestScope;
     }
 
-    if (sessionsResult.status === "fulfilled") {
-      setSessions(
-        asArray(sessionsResult.value, [
-          "sessions",
-          "items",
-        ])
-      );
-    } else {
-      setSessions([]);
-    }
-
-    if (overviewResult.status === "fulfilled") {
-      setOverview(overviewResult.value || null);
-    } else {
-      setOverview(null);
-    }
+    const summary = summaryResult.status === "fulfilled" ? summaryResult.value : null;
+    setProfile(summary ? { ...summary, teacher_name: summary.teacher_name || user?.name } : null);
+    setOverview(summary);
+    setAssignments(assignmentsResult.status === "fulfilled" ? asArray(assignmentsResult.value) : []);
+    setSessions(sessionsResult.status === "fulfilled" ? asArray(sessionsResult.value) : []);
+    setAssignmentsAvailable(assignmentsResult.status === "fulfilled");
+    setSessionsAvailable(sessionsResult.status === "fulfilled");
+    dataScopeRef.current = requestScope;
+    setDataScope(requestScope);
 
     const errors = [];
 
-    if (profileResult.status === "rejected") {
-      errors.push(
-        getErrorMessage(
-          profileResult.reason,
-          "Teacher assignments could not be loaded."
-        )
-      );
+    if (summaryResult.status === "rejected") {
+      errors.push(getErrorMessage(summaryResult.reason, "Teacher summary could not be loaded."));
     }
-
+    if (assignmentsResult.status === "rejected") {
+      errors.push(getErrorMessage(assignmentsResult.reason, "Teacher assignments could not be loaded."));
+    }
     if (sessionsResult.status === "rejected") {
-      errors.push(
-        getErrorMessage(
-          sessionsResult.reason,
-          "Attendance sessions could not be loaded."
-        )
-      );
-    }
-
-    if (overviewResult.status === "rejected") {
-      errors.push(
-        getErrorMessage(
-          overviewResult.reason,
-          "Attendance analytics could not be loaded."
-        )
-      );
+      errors.push(getErrorMessage(sessionsResult.reason, "Attendance sessions could not be loaded."));
     }
 
     if (errors.length) {
-      setError(errors.join(" "));
+      setError(uniqueApiErrorMessages(errors));
     }
 
     setLastUpdated(new Date());
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [activeCollegeId, authenticatedUserId, user?.name]);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
 
-  // Keep newly started sessions and live aggregate counts current without
-  // polling in a background tab.
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        loadDashboard(true);
-      }
-    }, 15000);
+  useEffect(() => () => { requestVersion.current += 1; }, []);
 
-    return () => window.clearInterval(timer);
+  useEffect(() => {
+    const refreshVisibleDashboard = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAutoRefreshAtRef.current < 1000) return;
+      lastAutoRefreshAtRef.current = now;
+      loadDashboard(true);
+    };
+    window.addEventListener("focus", refreshVisibleDashboard);
+    document.addEventListener("visibilitychange", refreshVisibleDashboard);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleDashboard);
+      document.removeEventListener("visibilitychange", refreshVisibleDashboard);
+    };
   }, [loadDashboard]);
 
-  const assignments = useMemo(
-    () => asArray(profile?.assignments, ["items"]),
-    [profile]
-  );
+  useEffect(() => {
+    if (!new Set(["#my-classes", "#subject-assignments", "#my-subjects"]).has(location.hash)) return;
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [location.hash]);
+
+  const currentDataScope = dataScope === `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+  const visibleAssignments = currentDataScope ? assignments : [];
+  const activeAssignments = visibleAssignments.filter((assignment) => assignment.is_active !== false);
+  const mySubjects = [...new Map(activeAssignments.map((assignment) => [String(assignment.subject_id), assignment])).values()];
+  const assignedClassCount = new Set(activeAssignments.filter((assignment) => assignment.class_id != null).map((assignment) => String(assignment.class_id))).size;
+  const assignedSubjectCount = new Set(activeAssignments.filter((assignment) => assignment.subject_id != null).map((assignment) => String(assignment.subject_id))).size;
+  const visibleSessions = currentDataScope ? sessions : [];
+  const visibleAssignmentsAvailable = currentDataScope && assignmentsAvailable;
+  const visibleSessionsAvailable = currentDataScope && sessionsAvailable;
+  const visibleOverview = currentDataScope ? overview : null;
 
   const activeSessions = useMemo(
     () =>
-      sessions.filter(
+      visibleSessions.filter(
         (session) =>
           String(session.status || "").toLowerCase() === "active"
       ),
-    [sessions]
+    [visibleSessions]
   );
 
   const firstName =
@@ -191,9 +245,7 @@ export default function TeacherDashboard() {
       .trim()
       .split(/\s+/)[0] || "Teacher";
 
-  const attendanceRate = Number(
-    overview?.attendance_percentage ?? 0
-  );
+  const attendanceRate = visibleOverview?.attendance_percentage;
 
   return (
     <div className="teacher-dashboard-page">
@@ -225,7 +277,7 @@ export default function TeacherDashboard() {
           <button
             type="button"
             className="td-quiet-button"
-            onClick={() => loadDashboard(true)}
+            onClick={() => loadDashboard(true, true)}
             disabled={loading || refreshing}
           >
             <RefreshCw
@@ -245,16 +297,22 @@ export default function TeacherDashboard() {
             <ArrowRight size={16} />
           </Link>
         </div>
+        <aside className="td-workspace-snapshot" aria-label="Current teaching activity">
+          <span className="td-snapshot-kicker"><Activity size={13} /> TODAY AT A GLANCE</span>
+          <div className="td-snapshot-values">
+            <div><strong>{loading ? "—" : visibleAssignmentsAvailable ? activeAssignments.length : "—"}</strong><span>active class-subject mappings</span></div>
+            <i aria-hidden="true" />
+            <div><strong>{loading ? "—" : visibleSessionsAvailable ? activeSessions.length : "—"}</strong><span>open sessions</span></div>
+          </div>
+          <small>Counts reflect the selected College workspace.</small>
+        </aside>
       </section>
 
       {error && (
-        <div className="td-alert" role="status">
+        <div className="td-alert" role="alert">
           <ShieldAlert size={18} />
 
-          <span>
-            {error} Check that the backend is running
-            and your teacher profile is active.
-          </span>
+          <span>{error}</span>
         </div>
       )}
 
@@ -268,10 +326,10 @@ export default function TeacherDashboard() {
             <span>Attendance rate</span>
 
             <strong>
-              {loading ? "—" : `${Math.round(attendanceRate)}%`}
+              {loading ? "..." : attendanceRate == null ? "N/A" : `${Math.round(attendanceRate)}%`}
             </strong>
 
-            <small>From attendance analytics</small>
+            <small>Present + late among classified events</small>
           </div>
         </article>
 
@@ -286,7 +344,7 @@ export default function TeacherDashboard() {
             <strong>
               {loading
                 ? "—"
-                : (overview?.sessions ?? sessions.length)}
+                : visibleOverview?.sessions ?? "Unavailable"}
             </strong>
 
             <small>Attendance sessions</small>
@@ -302,7 +360,7 @@ export default function TeacherDashboard() {
             <span>Active now</span>
 
             <strong>
-              {loading ? "—" : activeSessions.length}
+              {loading ? "..." : visibleSessionsAvailable ? activeSessions.length : "Unavailable"}
             </strong>
 
             <small>Open sessions</small>
@@ -315,29 +373,53 @@ export default function TeacherDashboard() {
           </span>
 
           <div>
-            <span>Assignments</span>
+            <span>Assigned classes</span>
 
             <strong>
               {loading
                 ? "—"
-                : (profile?.total_assignments ?? assignments.length)}
+                : visibleAssignmentsAvailable ? assignedClassCount : "Unavailable"}
             </strong>
 
-            <small>Classes and subjects</small>
+            <small>Active College class-subject mappings</small>
+          </div>
+        </article>
+        <article className="td-kpi-card">
+          <span className="td-kpi-icon purple"><BookOpenCheck size={20} /></span>
+          <div>
+            <span>Assigned subjects</span>
+            <strong>{loading ? "—" : visibleAssignmentsAvailable ? assignedSubjectCount : "Unavailable"}</strong>
+            <small>Distinct active subjects</small>
+          </div>
+        </article>
+        <article className="td-kpi-card">
+          <span className="td-kpi-icon green"><CheckCircle2 size={20} /></span>
+          <div>
+            <span>Present events</span>
+            <strong>{loading ? "—" : visibleOverview ? (visibleOverview.present_events ?? 0) : "Unavailable"}</strong>
+            <small>Verified events across your sessions</small>
+          </div>
+        </article>
+        <article className="td-kpi-card">
+          <span className="td-kpi-icon orange"><UsersRound size={20} /></span>
+          <div>
+            <span>Absent events</span>
+            <strong>{loading ? "—" : visibleOverview ? (visibleOverview.absent_events ?? 0) : "Unavailable"}</strong>
+            <small>Classified events across your sessions</small>
           </div>
         </article>
       </section>
 
-      <section className="td-main-grid">
+      <section className="td-main-grid" id="my-classes">
         <article className="td-card">
           <div className="td-head">
             <div>
               <span>YOUR CLASSROOM</span>
-              <h3>Assigned classes & subjects</h3>
+              <h3 id="subject-assignments">Subject Assignments</h3>
             </div>
 
             <span className="td-count-pill">
-              {loading ? "…" : assignments.length} assigned
+              {loading ? "…" : visibleAssignments.length} assigned
             </span>
           </div>
 
@@ -346,7 +428,9 @@ export default function TeacherDashboard() {
               <span className="td-loader" />
               Loading assignments…
             </div>
-          ) : assignments.length === 0 ? (
+          ) : !visibleAssignmentsAvailable ? (
+            <div className="td-empty" role="status">Teacher assignments are unavailable. Refresh to retry.</div>
+          ) : activeAssignments.length === 0 ? (
             <div className="td-empty">
               <span className="td-empty-icon">
                 <BookOpenCheck size={22} />
@@ -355,13 +439,12 @@ export default function TeacherDashboard() {
               <strong>No assignments found</strong>
 
               <p>
-                Ask your administrator to assign a class
-                and subject to your teacher account.
+                Ask your College Admin to assign an active Class and Subject to your account.
               </p>
             </div>
           ) : (
             <div className="td-assignment-list">
-              {assignments.slice(0, 8).map((assignment, index) => (
+              {activeAssignments.map((assignment, index) => (
                 <div
                   className="td-assignment-row"
                   key={
@@ -387,11 +470,17 @@ export default function TeacherDashboard() {
                         ? ` · ${assignment.section}`
                         : ""}
                     </span>
+                    <span>
+                      {assignment.department || "Department unavailable"}
+                      {assignment.semester != null ? ` · Semester ${assignment.semester}` : ""}
+                      {assignment.academic_year ? ` · ${assignment.academic_year}` : ""}
+                    </span>
+                    {assignment.effective_from && <span>Assigned {formatDateTime(assignment.effective_from)}</span>}
                   </div>
 
                   <span className="td-assignment-code">
-                    {assignment.subject_code ||
-                      `SUB-${assignment.subject_id ?? "—"}`}
+                    {assignment.subject_code || "Code unavailable"}
+                    <small>Active</small>
                   </span>
                 </div>
               ))}
@@ -416,6 +505,8 @@ export default function TeacherDashboard() {
               <span className="td-loader" />
               Checking live sessions…
             </div>
+          ) : !visibleSessionsAvailable ? (
+            <div className="td-empty" role="status">Active attendance sessions are unavailable. Refresh to retry.</div>
           ) : activeSessions.length === 0 ? (
             <div className="td-empty">
               <span className="td-empty-icon">
@@ -483,6 +574,28 @@ export default function TeacherDashboard() {
         </article>
       </section>
 
+      <section className="td-card td-recent-card" id="my-subjects" aria-label="My Subjects">
+        <div className="td-head">
+          <div>
+            <span>TEACHING CATALOG</span>
+            <h3>My Subjects</h3>
+            <p>Subjects from your active College assignments.</p>
+          </div>
+          <Link to="/teacher/attendance">Start attendance <ArrowRight size={14} /></Link>
+        </div>
+        {loading ? <div className="td-empty" role="status">Loading your Subjects…</div>
+          : !visibleAssignmentsAvailable ? <div className="td-empty" role="status">Your Subject list is unavailable. Refresh to retry.</div>
+            : mySubjects.length === 0 ? <div className="td-empty" role="status">No active Subjects are assigned yet. Ask your College Admin to assign a Class and Subject.</div>
+              : <div className="td-assignment-list">{mySubjects.map((assignment) => <div className="td-assignment-row" key={assignment.subject_id}>
+                <span className="td-assignment-icon"><BookOpenCheck size={17} /></span>
+                <div>
+                  <strong>{assignment.subject_name || "Subject name unavailable"}</strong>
+                  <span>{assignment.subject_code || "Code unavailable"} · {assignment.department || "Department unavailable"}</span>
+                </div>
+                <span className="td-count-pill">{activeAssignments.filter((row) => String(row.subject_id) === String(assignment.subject_id)).length} Class(es)</span>
+              </div>)}</div>}
+      </section>
+
       <section className="td-card td-recent-card">
         <div className="td-head">
           <div>
@@ -503,7 +616,9 @@ export default function TeacherDashboard() {
           <div className="td-empty">
             Loading attendance sessions…
           </div>
-        ) : sessions.length === 0 ? (
+        ) : !visibleSessionsAvailable ? (
+          <div className="td-empty" role="status">Attendance sessions are unavailable. Refresh to retry.</div>
+        ) : visibleSessions.length === 0 ? (
           <div className="td-empty">
             <span className="td-empty-icon">
               <ClipboardList size={22} />
@@ -530,7 +645,7 @@ export default function TeacherDashboard() {
               </thead>
 
               <tbody>
-                {sessions.slice(0, 8).map((session, index) => {
+                {visibleSessions.slice(0, 8).map((session, index) => {
                   const status = String(
                     session.status || "unknown"
                   ).toLowerCase();

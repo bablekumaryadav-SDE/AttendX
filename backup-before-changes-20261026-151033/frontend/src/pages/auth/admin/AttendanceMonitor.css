@@ -1,0 +1,273 @@
+.monitor-page {
+  padding: 28px;
+  max-width: 1440px;
+  margin: auto;
+  color: #172033;
+}
+
+.monitor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.monitor-header span,
+.monitor-title span {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 800;
+  color: #667085;
+}
+
+.monitor-header h1 {
+  margin: 6px 0;
+  font-size: 32px;
+}
+
+.monitor-header p {
+  margin: 0;
+  color: #667085;
+}
+
+.monitor-header button {
+  padding: 11px 16px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.monitor-alert {
+  padding: 12px;
+  margin-bottom: 15px;
+  background: #fff4ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  color: #9a3412;
+}
+
+.monitor-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.monitor-sessions,
+.monitor-main {
+  background: #fff;
+  border: 1px solid #eaecf0;
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(16, 24, 40, 0.05);
+}
+
+.monitor-sessions {
+  padding: 12px;
+}
+
+.monitor-side-title {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  font-weight: 800;
+}
+
+.monitor-side-title b {
+  color: #98a2b3;
+}
+
+.monitor-sessions button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: #fff;
+  border-radius: 11px;
+  padding: 13px;
+  margin: 3px 0;
+  cursor: pointer;
+}
+
+.monitor-sessions button.selected {
+  background: #f8fafc;
+  border-color: #d0d5dd;
+}
+
+.monitor-sessions strong,
+.monitor-sessions span {
+  display: block;
+}
+
+.monitor-sessions span {
+  font-size: 11px;
+  color: #667085;
+  margin: 4px 0;
+}
+
+.monitor-sessions em {
+  font-size: 9px;
+  font-style: normal;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #667085;
+}
+
+.monitor-sessions em.active {
+  color: #027a48;
+}
+
+.monitor-main {
+  padding: 20px;
+  overflow: hidden;
+}
+
+.monitor-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.monitor-title h2 {
+  margin: 6px 0;
+  font-size: 22px;
+}
+
+.monitor-title p {
+  margin: 0;
+  color: #667085;
+}
+
+.monitor-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  height: max-content;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.monitor-pill.active {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.monitor-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.monitor-stats div {
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #eaecf0;
+  border-radius: 12px;
+}
+
+.monitor-stats span {
+  display: block;
+  font-size: 11px;
+  color: #667085;
+}
+
+.monitor-stats strong {
+  font-size: 24px;
+}
+
+.monitor-table-wrap {
+  overflow: auto;
+  position: relative;
+}
+
+.monitor-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.monitor-table-wrap th,
+.monitor-table-wrap td {
+  padding: 12px;
+  border-bottom: 1px solid #f2f4f7;
+  text-align: left;
+  font-size: 12px;
+}
+
+.monitor-table-wrap th {
+  font-size: 9px;
+  color: #98a2b3;
+  text-transform: uppercase;
+}
+
+.monitor-table-wrap td strong,
+.monitor-table-wrap td small {
+  display: block;
+}
+
+.monitor-table-wrap td small {
+  font-size: 9px;
+  color: #98a2b3;
+  margin-top: 3px;
+}
+
+.monitor-status {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+}
+
+.monitor-status.present {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.monitor-status.late {
+  background: #fffaeb;
+  color: #b54708;
+}
+
+.monitor-status.absent {
+  color: #667085;
+}
+
+.monitor-loading {
+  padding: 10px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.monitor-empty {
+  text-align: center;
+  color: #98a2b3;
+  padding: 25px 10px;
+}
+
+.monitor-empty.large {
+  padding: 80px;
+}
+
+@media (max-width: 900px) {
+  .monitor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .monitor-page {
+    padding: 18px;
+  }
+
+  .monitor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

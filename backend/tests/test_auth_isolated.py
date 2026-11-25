@@ -62,12 +62,14 @@ class AuthenticationTests(unittest.TestCase):
         self.assertEqual(profile.status_code, 200, profile.text)
         self.assertEqual(profile.json()["user_id"], 77)
         self.assertEqual(profile.json()["role"], "student")
-        self.assertEqual(self.client.get("/admin-dashboard", headers=headers).status_code, 403)
+        # The legacy dashboard is behind the default-deny gate, so its public
+        # tenant-integration status is not a usable role check here.
+        self.assertEqual(self.client.get("/admin-dashboard", headers=headers).status_code, 503)
 
         # Existing JWT role claims do not override the current database role.
         with self.Session.begin() as session:
             session.get(User, 77).role = "admin"
-        self.assertEqual(self.client.get("/admin-dashboard", headers=headers).status_code, 200)
+        self.assertEqual(self.client.get("/auth/me", headers=headers).json()["role"], "admin")
 
         with self.Session.begin() as session:
             session.get(User, 77).is_active = False
@@ -87,6 +89,38 @@ class AuthenticationTests(unittest.TestCase):
             "Authorization": f"Bearer {login.json()['access_token']}"
         })
         self.assertEqual(response.status_code, 401)
+
+    def test_supported_roles_authenticate_and_auth_me_returns_database_role(self):
+        role_cases = (
+            (78, "auth-super@example.org", "super_admin"),
+            (79, "auth-college-admin@example.org", "admin"),
+            (80, "auth-teacher@example.org", "teacher"),
+            (81, "auth-student@example.org", "student"),
+        )
+        with self.Session.begin() as session:
+            for user_id, email, role in role_cases:
+                session.add(User(
+                    id=user_id,
+                    name=f"Synthetic {role}",
+                    email=email,
+                    hashed_password=get_password_hash("RoleLogin!Synthetic2026"),
+                    role=role,
+                    is_active=True,
+                ))
+
+        for _, email, role in role_cases:
+            with self.subTest(role=role):
+                login = self.client.post("/auth/login", json={
+                    "email": email,
+                    "password": "RoleLogin!Synthetic2026",
+                })
+                self.assertEqual(login.status_code, 200, login.text)
+                self.assertNotIn("hashed_password", login.json())
+                profile = self.client.get("/auth/me", headers={
+                    "Authorization": f"Bearer {login.json()['access_token']}"
+                })
+                self.assertEqual(profile.status_code, 200, profile.text)
+                self.assertEqual(profile.json()["role"], role)
 
 
 if __name__ == "__main__":

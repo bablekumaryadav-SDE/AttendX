@@ -1,251 +1,104 @@
-# AttendX Project
-# AttendX — Implement Real Face Recognition Attendance in Student Dashboard
+# AttendX
 
-## Project Background
+AttendX is a college attendance web application with a React/Vite frontend and a FastAPI/SQLAlchemy backend. The current app includes Admin, Teacher and Student roles, session QR attendance, classroom geofence checks, face registration/matching, reports and in-app notifications.
 
-I am a B.Tech CSE final-year student developing **AttendX — AI-Powered Smart Attendance Management System**.
+The repository contains a **partial multi-college tenant implementation** for explicitly reviewed API routes, College membership selection and tenant-scoped dashboards. The tenant schema migration remains DRAFT / NOT APPLIED, and the actual configured PostgreSQL schema has not been validated in this continuation; therefore application-level tenant behavior and production readiness are not established. This project is **not production-ready** for the complete multi-college SaaS requirements. Subscription management and a native Android project are not established. See the [master audit](docs/MASTER_REQUIREMENT_AUDIT.md) and current [continuation report](docs/MASTER_IMPLEMENTATION_CONTINUATION_2026-11-12.md) for the verified feature matrix and blockers.
 
-I have an existing AttendX project with a React + Vite frontend, Python FastAPI backend, SQLAlchemy ORM and PostgreSQL database. The project already contains student, teacher and admin dashboards, authentication, attendance functionality, QR attendance and admin-side face photo registration.
+## Repository layout
 
-**Your task is to inspect my actual uploaded project ZIP, understand the existing code, and implement a fully functional Face Recognition Attendance feature in the Student Dashboard.**
+- `backend/` — FastAPI API, SQLAlchemy models, services and isolated backend tests.
+- `frontend/` — React/Vite website and dashboards.
+- `database/migrations/` — versioned SQL scripts; no automated migration ledger/runner was identified.
+- `deployment/` — Docker Compose, container and Nginx configuration scaffold; not runtime validated.
+- `docs/` — audit, test evidence, security, migration and deployment reports.
 
-Do not create a new project from scratch. Work on my existing codebase.
+## Prerequisites
 
-## 1. Current Problem
+- Windows PowerShell.
+- Python environment with packages from `backend/requirements.txt` (the current checkout has a root `.venv`).
+- Node.js/npm and the existing frontend dependencies (`frontend/node_modules` may already be present).
+- PostgreSQL configured by `backend/.env` for normal backend operation. Never commit or print `.env` values.
 
-Currently, the Student Dashboard provides a QR scanner, but the student-facing Face Attendance feature is missing or incomplete.
+## Local development
 
-The admin panel has a face photo registration feature, but the complete flow from face registration to real face verification and attendance recording is not working correctly.
+Open two PowerShell terminals from this repository directory. The backend requires valid database configuration and a strong `SECRET_KEY` (at least 32 bytes); it fails closed if JWT settings are weak.
 
-I want students to mark attendance through their own camera using real face verification while keeping the existing QR attendance system functional.
+Backend:
 
-## 2. Required Student Dashboard Features
+```powershell
+Push-Location .\backend
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+Pop-Location
+```
 
-Add a professional **Face Attendance** option to the existing Student Dashboard.
+Frontend:
 
-The interface should include:
+```powershell
+Push-Location .\frontend
+npm run dev
+Pop-Location
+```
 
-- Face Attendance button or card.
-- Live camera preview.
-- Start Camera and Stop Camera controls.
-- Capture Face or Verify Face button.
-- Camera permission handling.
-- Face verification loading indicator.
-- Clear verification success and failure messages.
-- Attendance session status.
-- Attendance marking result.
-- QR Attendance as an alternative method.
+The frontend uses Vite's default local URL (`http://localhost:5173`); the API defaults are configured in `frontend/src/services/api.js`. Production requires an approved HTTPS API origin and explicit backend CORS origins. Do not use a laptop's `localhost` as a physical phone API address.
 
-Preserve the existing design system, navigation, responsive layout and dashboard components.
+## Automated checks
 
-## 3. Real Face Registration and Verification
+Backend isolated tests (from the repo root):
 
-Inspect the current face registration implementation before making changes.
+```powershell
+$env:DATABASE_URL = 'sqlite://'
+$env:SECRET_KEY = 'test-only-secret-use-at-least-32-bytes-long'
+$env:ALGORITHM = 'HS256'
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173'
+Push-Location .\backend
+..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+Pop-Location
+Remove-Item Env:\DATABASE_URL,Env:\SECRET_KEY,Env:\ALGORITHM,Env:\CORS_ALLOWED_ORIGINS
+```
 
-Implement the following complete workflow:
+The backend test fixtures use isolated SQLite databases. These checks do not validate PostgreSQL migrations or production data.
 
-1. An admin registers a student and uploads a valid face image, or uses the existing supported registration flow.
-2. The backend validates the image format, size and image contents.
-3. The backend detects a usable face.
-4. The backend generates a genuine face embedding using a real face-recognition model.
-5. The embedding is stored securely and associated with the correct student.
-6. When the student starts Face Attendance, the browser requests camera permission.
-7. The browser captures a live camera frame and sends it to the authenticated backend.
-8. The backend processes the captured face using the same compatible recognition model.
-9. The backend compares the captured embedding against the registered embedding using a configured similarity or distance threshold.
-10. The backend identifies whether the face matches the authenticated student's registered face.
-11. Attendance is considered only after identity verification succeeds.
+Frontend tests (from `frontend`):
 
-Important requirements:
+```powershell
+node --test --test-concurrency=1 tests/*.test.mjs
+```
 
-- Never use fake embeddings, hardcoded success responses, random matching or placeholder verification.
-- Never accept a client-provided student ID as proof of identity.
-- Derive the student identity from the authenticated user and verify that the student record belongs to that user.
-- Reject missing, invalid, corrupted or unregistered face data.
-- Do not set `face_registered = true` unless valid registration has actually completed.
-- Prevent one student's face from being used to register or mark attendance for another student without authorization.
-- Keep face images and embeddings protected from unauthorized access.
+Build only when C: has at least 1.5 GB free, as required by the project brief:
 
-If the existing model is unsuitable or unavailable in the current environment, inspect compatibility and recommend a practical implementation that fits the existing Python environment. Do not silently replace real face recognition with a mock.
+```powershell
+Push-Location .\frontend
+$env:TEMP = 'D:\Temp'
+$env:TMP = 'D:\Temp'
+$env:npm_config_cache = 'D:\Temp\npm-cache'
+npm --cache 'D:\Temp\npm-cache' run build -- --outDir 'D:\Temp\AttendX-build'
+Pop-Location
+```
 
-## 4. Attendance Session Validation
+## Database and migrations
 
-Before recording face attendance, verify:
+Do not run SQL migrations against production from this README. The migration state of any configured database must first be inspected and verified, and tenant ownership must be mapped explicitly. Follow [PostgreSQL Migration Plan](docs/POSTGRESQL_MIGRATION_PLAN.md) and [Tenant Migration Plan](docs/TENANT_MIGRATION_PLAN.md). The tenant migration is currently blocked because existing records have no institution ownership.
 
-- The student is authenticated.
-- The student account is active and eligible.
-- An appropriate attendance session exists.
-- The session is currently active and within its permitted time window.
-- The student belongs to the relevant class or course, where applicable.
-- Face verification has succeeded.
-- The student has not already marked attendance for that session.
-- Existing GPS/geofencing requirements are enforced if they are already part of the applicable attendance workflow.
+## Super Admin bootstrap
 
-Only after all required checks succeed should the backend create the attendance record.
+The guarded bootstrap command is implemented but has **not been executed**. It is limited to a local development PostgreSQL database, requires an existing audit table, prompts for the password without echoing it, and refuses existing accounts. Follow [Super Admin Bootstrap Guide](docs/SUPER_ADMIN_BOOTSTRAP_GUIDE.md). It does not provide production provisioning or platform operations.
 
-Use a database-level uniqueness constraint or equivalent transaction-safe protection where appropriate to prevent concurrent duplicate attendance submissions.
+## Project status and privacy
 
-Do not mark attendance when face verification fails, the session is inactive, the student is ineligible or the attendance record already exists.
+- Do not interpret source presence or isolated SQLite test passes as production readiness.
+- Face matching is not liveness detection; genuine positive face matching and biometric retention controls are not verified.
+- GPS checks are server-side but cannot guarantee spoof prevention.
+- Notifications are not proof of external delivery unless a configured provider confirms delivery.
+- No production migration, database write, deployment, provider activation, backup restore drill or physical Android test has been performed.
+- Keep passwords, JWT secrets, database URLs, face images, embeddings, QR tokens and private student locations out of Git, logs and reports.
 
-Preserve existing attendance statuses, session rules and database relationships.
+Read [Master Requirement Audit](docs/MASTER_REQUIREMENT_AUDIT.md), [Target Architecture](docs/TARGET_ARCHITECTURE.md), [Security Threat Model](docs/SECURITY_THREAT_MODEL.md), and [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) before planning further work.
 
-## 5. Backend Implementation
+## 2026-11-12 verification note
 
-Inspect the actual FastAPI project and implement the feature using its existing architecture.
+The source registers the tenant `GET /teachers/` API and the frontend calls that route with the selected College. Synthetic ASGI tests pass, but the reported 404 from an already-running local server has not been reproduced or diagnosed against that process. Synthetic SQLite tests also exercise active-session visibility, QR submission, Student history and Teacher live monitoring; they are not PostgreSQL or browser acceptance. Current full-suite results and outstanding limits are recorded in [the continuation report](docs/MASTER_IMPLEMENTATION_CONTINUATION_2026-11-12.md) and [test results](docs/TEST_RESULTS.md). Do not treat these checks as production readiness.
 
-Check and modify the relevant files as necessary, including:
 
-- `backend/app/main.py`
-- Existing authentication and user/student models.
-- Existing student API routes.
-- Existing face registration or face verification services.
-- Existing attendance and attendance-session routes.
-- Existing database models and schemas.
-- Existing dependencies and configuration files.
+### Teacher registration limitation (2026-11-12)
 
-Create or update appropriate modules only when needed.
-
-Implement proper APIs for:
-
-- Checking whether the authenticated student has registered face data.
-- Starting or validating an attendance session.
-- Submitting a camera frame for face verification.
-- Verifying the registered face.
-- Recording attendance after successful verification.
-- Returning the attendance result and useful error messages.
-
-Use the existing API conventions, authentication dependencies, SQLAlchemy sessions, response schemas and error-handling patterns.
-
-Do not introduce duplicate endpoints or conflicting database models if equivalent implementations already exist.
-
-## 6. Frontend Implementation
-
-Inspect the actual React routing, authentication context, API service layer and Student Dashboard components.
-
-Integrate Face Attendance into the existing student-facing interface.
-
-Requirements:
-
-- Use the correct authenticated API client.
-- Send the correct access token.
-- Use the browser camera through `navigator.mediaDevices.getUserMedia()` where supported.
-- Handle camera permission denial, missing camera and camera errors.
-- Release the camera tracks when the component unmounts or the camera is stopped.
-- Prevent repeated submissions while verification is in progress.
-- Display backend validation errors clearly.
-- Refresh attendance history or dashboard statistics after successful attendance.
-- Keep QR scanning, student profile, login and teacher/admin dashboards working.
-
-Check imports, exports, route definitions, component paths and JSX syntax before finishing.
-
-Do not assume the student dashboard is located in a particular directory until you inspect the ZIP.
-
-## 7. Database and Migration Safety
-
-Inspect the existing PostgreSQL schema and SQLAlchemy models first.
-
-- Reuse existing face and attendance tables where possible.
-- Preserve existing student records and attendance history.
-- Do not drop or recreate the database.
-- Do not delete existing migrations or project files.
-- Add migrations or safe schema updates only if genuinely required.
-- Ensure embeddings use a consistent format and compatible model version.
-- Handle existing registrations whose embeddings are missing or invalid.
-
-Create a backup before modifying existing source files or database schema.
-
-## 8. Security and Liveness
-
-Implement face matching as a genuine backend operation.
-
-If the project includes a liveness component, inspect and integrate it correctly. If genuine liveness detection is not available, clearly identify that limitation and do not claim that photo or video replay attacks are fully prevented.
-
-Face matching alone must not be described as proof of liveness.
-
-Protect camera frames, stored images and embeddings. Avoid logging sensitive biometric data. Do not expose embeddings or private image data through ordinary student APIs.
-
-## 9. Preserve Existing Features
-
-Do not break or remove:
-
-- Admin Dashboard.
-- Student registration and management.
-- Teacher Dashboard.
-- Class and course management.
-- Existing QR Attendance.
-- Attendance sessions.
-- GPS/geofencing validation, where implemented.
-- Attendance reports and exports.
-- Role-based authentication and protected routes.
-- Existing frontend design and navigation.
-
-The existing project must be enhanced, not rebuilt.
-
-## 10. Testing Requirements
-
-Run actual tests wherever the environment permits.
-
-Test at least these cases:
-
-1. Valid registered student face.
-2. Unregistered student face.
-3. Face mismatch using another registered student's image.
-4. Invalid or unreadable image.
-5. No usable face detected.
-6. Camera permission denied.
-7. Inactive or expired attendance session.
-8. Student not eligible for the class.
-9. Duplicate attendance attempt.
-10. Unauthenticated API request.
-11. Unauthorized role or student record access.
-12. Successful attendance persistence in PostgreSQL.
-13. Existing QR attendance still works.
-14. Teacher and admin dashboards still open correctly.
-15. Student Dashboard opens and displays Face Attendance.
-
-Check backend startup, frontend compilation, API integration, database operations and relevant automated tests.
-
-Do not claim a test passed unless it was actually executed and its result was checked.
-
-Clearly distinguish:
-- Passed tests.
-- Failed tests.
-- Not tested.
-- Tests requiring my local camera, database, credentials or external services.
-
-## 11. Required Deliverables
-
-After completing the work, provide:
-
-1. A diagnosis of the original problem.
-2. The exact root cause found in the existing source code.
-3. A list of modified and newly created files.
-4. Complete corrected code for important modified files.
-5. Any database migration or configuration instructions.
-6. Updated dependency requirements, if needed.
-7. Exact Windows PowerShell commands to start the backend and frontend.
-8. Instructions to register a student's face and test attendance.
-9. Actual test results with failures and limitations clearly identified.
-10. A new ZIP containing the corrected existing project, if file editing and packaging are available.
-11. A concise implementation summary suitable for my final-year project documentation.
-
-## 12. Development Environment
-
-My usual local project path is:
-
-`C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX`
-
-Typical URLs:
-
-- Frontend: `http://localhost:5173`
-- Backend: `http://127.0.0.1:8000`
-
-The existing stack includes React, Vite, FastAPI, SQLAlchemy and PostgreSQL. Inspect the uploaded project to confirm the actual versions and configuration before changing dependencies.
-
-## Final Instruction
-
-Start by extracting and inspecting the uploaded ZIP. Trace the complete existing flow from student authentication to face registration, camera capture, backend verification, attendance-session validation and database insertion.
-
-Identify the actual root cause before editing any files. Make the necessary changes directly in the existing project where supported, preserve all working features, and test the implementation.
-
-**Do not merely provide suggestions or sample code. Implement the actual feature, verify what can be verified, and return a corrected project ZIP if possible. Explain the steps in simple Hinglish because I am a beginner.**
+Teacher creation is tenant-scoped at `POST /teachers/`; the backend generates the employee ID, hashes the permanent password, validates same-College active Class/Subject records, and commits Teacher/User/membership/assignment records transactionally when the required schema is present. Assignment-bearing registration requires the effective-date columns from the DRAFT / NOT APPLIED relationship-date migration. Without them, the server returns 503 before creating partial account records. Do not apply that migration without separate review and approval. Actual PostgreSQL/browser behavior remains unverified. See the current continuation report.

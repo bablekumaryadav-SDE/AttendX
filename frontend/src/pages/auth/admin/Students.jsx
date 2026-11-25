@@ -20,6 +20,7 @@ import {
   updateStudent, 
 } from "../../../services/students"; 
 import { getClasses } from "../../../services/academic";
+import { useAuth } from "../../../context/AuthContext";
 import {
   canStartFaceCamera,
   getCameraErrorMessage,
@@ -84,6 +85,7 @@ const successCardStyle = {
 ========================================================= */ 
  
 function Students() { 
+  const { activeCollegeId } = useAuth();
   /* ------------------------------------------------------- 
      STUDENT DATA 
   ------------------------------------------------------- */ 
@@ -306,10 +308,10 @@ function Students() {
   }, [loadStudents]); 
 
   useEffect(() => {
-    getClasses()
+    getClasses(activeCollegeId)
       .then((data) => setClasses(Array.isArray(data) ? data : []))
       .catch((err) => setError(getApiErrorMessage(err, "Unable to load classes for student assignment.")));
-  }, []);
+  }, [activeCollegeId]);
  
   /* ========================================================= 
      SEARCH 
@@ -922,6 +924,51 @@ function Students() {
     setFaceFile(file); 
     setCameraError(""); 
   }; 
+
+  const saveCapturedFace = async () => {
+    const studentId =
+      savedStudentIdRef.current ?? editingStudent?.id ?? pendingFaceStudentId;
+
+    if (!studentId) {
+      setCameraError("Save the student details first so the face photo can be linked to the correct account.");
+      return;
+    }
+    if (!faceFile) {
+      setCameraError("Capture or select a face photo before registering it.");
+      return;
+    }
+    if (!faceConsentAccepted) {
+      setCameraError("Confirm the student's or guardian's consent before registering a face image.");
+      return;
+    }
+
+    setCameraError("");
+    setFaceSaving(true);
+    try {
+      const saved = await registerStudentFace(
+        studentId,
+        faceFile,
+        faceConsentAccepted,
+      );
+      if (!saved?.face_registered) {
+        throw new Error("The server did not confirm that the face image and template were saved.");
+      }
+
+      setEditingStudent(saved);
+      setPendingFaceStudentId(null);
+      setFaceFile(null);
+      setFaceConsentAccepted(false);
+      setNotice("Face photo and recognition template were saved for this student.");
+      await loadStudents();
+    } catch (faceError) {
+      setCameraError(getApiErrorMessage(
+        faceError,
+        "Face registration failed. The photo was not confirmed as saved; check the error and retry.",
+      ));
+    } finally {
+      setFaceSaving(false);
+    }
+  };
  
   /* ========================================================= 
      SUBMIT STUDENT 
@@ -1757,6 +1804,17 @@ function Students() {
                 ↻ Retake Photo 
               </button> 
             )} 
+
+            {faceFile && (
+              <button
+                type="button"
+                className="primary-button camera-control-button"
+                onClick={() => void saveCapturedFace()}
+                disabled={saving || faceSaving || !registrationStudentId || !faceConsentAccepted}
+              >
+                {faceSaving ? "Saving Face Registration..." : "Register Face Photo"}
+              </button>
+            )}
  
             {/* UPLOAD */} 
  
@@ -1903,7 +1961,7 @@ function Students() {
  
         <p className="face-panel-footer-hint"> 
           {faceFile 
-            ? "Photo captured. Save changes to send it to the authorized face-registration API."
+            ? "Photo captured. Click Register Face Photo to upload and save it for this student."
             : isCreateMode 
             ? "Save student details first. After saving, confirm explicit consent and click Start Camera."
             : "With explicit student or guardian consent, capture a new face photo to register or replace the attendance reference."}

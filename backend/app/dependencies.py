@@ -100,6 +100,18 @@ def get_current_admin(
     return current_user
 
 
+def get_current_super_admin(
+    current_user: AuthenticatedPrincipal = Depends(get_current_user),
+):
+    """Authorize platform operations from the database-backed principal role."""
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super Admin access required.",
+        )
+    return current_user
+
+
 def get_current_teacher(
     current_user: AuthenticatedPrincipal = Depends(get_current_user),
 ):

@@ -1,6 +1,7 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { getProtectedRouteDecision } from "./roleAccess";
 
 export default function ProtectedRoute({
   children,
@@ -8,8 +9,14 @@ export default function ProtectedRoute({
 }) {
   const { user, loading, isAuthenticated } = useAuth();
   const location = useLocation();
+  const decision = getProtectedRouteDecision({
+    user,
+    loading,
+    isAuthenticated,
+    allowedRoles,
+  });
 
-  if (loading) {
+  if (decision.type === "loading") {
     return (
       <div className="app-loading">
         <div className="loading-card">
@@ -20,7 +27,7 @@ export default function ProtectedRoute({
     );
   }
 
-  if (!isAuthenticated || !user) {
+  if (decision.to === "/login") {
     return (
       <Navigate
         to="/login"
@@ -30,24 +37,10 @@ export default function ProtectedRoute({
     );
   }
 
-  const role = String(user.role || "")
-    .trim()
-    .toLowerCase();
-
-  const roles = allowedRoles.map((item) =>
-    String(item).trim().toLowerCase()
-  );
-
-  if (roles.length > 0 && !roles.includes(role)) {
-    const dashboardByRole = {
-      admin: "/admin",
-      teacher: "/teacher",
-      student: "/student",
-    };
-
+  if (decision.type === "redirect") {
     return (
       <Navigate
-        to={dashboardByRole[role] || "/login"}
+        to={decision.to}
         replace
       />
     );

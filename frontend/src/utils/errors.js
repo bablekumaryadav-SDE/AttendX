@@ -56,3 +56,9 @@ export function getApiErrorMessage(error, fallback = "The request could not be c
   const message = error?.message;
   return typeof message === "string" && message.trim() ? message : fallback;
 }
+
+export function uniqueApiErrorMessages(messages) {
+  return [...new Set((Array.isArray(messages) ? messages : [])
+    .map((message) => String(message ?? "").trim())
+    .filter(Boolean))].join(" ");
+}

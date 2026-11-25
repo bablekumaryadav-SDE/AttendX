@@ -11,34 +11,41 @@ from jose import JWTError, jwt
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BACKEND_DIR / ".env"
 
-load_dotenv(dotenv_path=ENV_FILE)
+# Keep the established isolated-test opt-out effective for every backend
+# configuration module. Normal application startup still loads the same file.
+if os.getenv("ATTENDX_SKIP_DOTENV") != "1":
+    load_dotenv(dotenv_path=ENV_FILE)
+
+
+def validate_jwt_settings(secret_key, algorithm, expiry_minutes):
+    """Validate JWT settings without ever including secret material in errors."""
+    if (
+        not secret_key
+        or secret_key == "attendx-development-secret-key-change-later"
+        or len(secret_key.encode("utf-8")) < 32
+    ):
+        raise RuntimeError(
+            "Backend .env mein kam se kam 32 bytes ka strong SECRET_KEY set karein. "
+            f"Environment file: {ENV_FILE}"
+        )
+    if algorithm != "HS256":
+        raise RuntimeError("ALGORITHM must be HS256 for AttendX JWT signing.")
+    try:
+        expiry_minutes = int(expiry_minutes)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("ACCESS_TOKEN_EXPIRE_MINUTES ek integer hona chahiye.") from exc
+    if expiry_minutes <= 0:
+        raise RuntimeError("ACCESS_TOKEN_EXPIRE_MINUTES zero se zyada hona chahiye.")
+    return expiry_minutes
+
 
 SECRET_KEY = os.getenv("SECRET_KEY")
-
-if (
-    not SECRET_KEY
-    or SECRET_KEY == "attendx-development-secret-key-change-later"
-):
-    raise RuntimeError(
-        "Backend .env mein strong SECRET_KEY set karein. "
-        f"Environment file: {ENV_FILE}"
-    )
-
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
-
-try:
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(
-        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")
-    )
-except ValueError as exc:
-    raise RuntimeError(
-        "ACCESS_TOKEN_EXPIRE_MINUTES ek integer hona chahiye."
-    ) from exc
-
-if ACCESS_TOKEN_EXPIRE_MINUTES <= 0:
-    raise RuntimeError(
-        "ACCESS_TOKEN_EXPIRE_MINUTES zero se zyada hona chahiye."
-    )
+ACCESS_TOKEN_EXPIRE_MINUTES = validate_jwt_settings(
+    SECRET_KEY,
+    ALGORITHM,
+    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"),
+)
 
 
 def get_password_hash(password: str) -> str:

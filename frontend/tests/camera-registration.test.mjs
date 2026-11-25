@@ -12,6 +12,8 @@ import {
 
 const adminPath = new URL("../src/pages/auth/admin/Students.jsx", import.meta.url);
 const servicePath = new URL("../src/services/students.js", import.meta.url);
+const tenantPagePath = new URL("../src/pages/auth/admin/TenantStudents.jsx", import.meta.url);
+const routesPath = new URL("../src/routes/AppRoutes.jsx", import.meta.url);
 const backendPath = new URL("../../backend/app/api/students.py", import.meta.url);
 
 test("camera requests use flexible real-video constraints without hard minimums", () => {
@@ -107,7 +109,22 @@ test("stopping a stream stops every media track", () => {
   assert.equal(stopped, 2);
 });
 
-test("admin registration saves the profile before opening its camera and capture waits for video readiness", async () => {
+test("Admin Students route uses the tenant-managed page, not legacy camera/face UI", async () => {
+  const [routes, page, legacyPage] = await Promise.all([
+    readFile(routesPath, "utf8"),
+    readFile(tenantPagePath, "utf8"),
+    readFile(adminPath, "utf8"),
+  ]);
+  assert.match(routes, /import TenantStudents from .*TenantStudents/);
+  assert.match(routes, /path="students"[\s\S]*?element=\{<TenantStudents \/>\}/);
+  assert.match(page, /getTenantStudents\(activeCollegeId, \{ search, course: courseFilter/);
+  assert.match(page, /updateTenantStudent\(selectedStudent\.id/);
+  assert.match(page, /assignTenantStudentToClass/);
+  assert.doesNotMatch(page, /startCamera|registerStudentFace|\bcreateStudent\s*\(|updateStudent\s*\(|assignStudentClass|saveStudentGuardian/);
+  assert.match(legacyPage, /registerStudentFace/); // preserved source is not mounted by the Admin route
+});
+
+test("preserved dormant legacy registration flow saves before camera and waits for video readiness", async () => {
   const source = await readFile(adminPath, "utf8");
   const createIndex = source.indexOf("await createStudent(");
   const switchToSavedIndex = source.indexOf("setEditingStudent(savedStudent)");
@@ -141,4 +158,15 @@ test("face upload sends an explicit consent field and requires backend acknowled
   assert.match(service, /formData\.append\("consent", "true"\)/);
   assert.match(backend, /consent: Annotated\[bool, Form\(\.\.\.\)\]/);
   assert.match(backend, /if not consent:/);
+});
+
+test("tenant Students face controls use explicit tenant-scoped registration and consent", async () => {
+  const source = await readFile(tenantPagePath, "utf8");
+  const service = await readFile(new URL("../src/services/tenantStudents.js", import.meta.url), "utf8");
+  assert.match(source, /FaceCamera/);
+  assert.match(source, /faceStatus === "registered" \? "Face Registered" : faceStatus === "not_registered" \? "Not Registered" : "Unavailable \/ Error"/);
+  assert.match(source, /Student consent has been obtained/);
+  assert.match(service, /\/tenant\/face\/students/);
+  assert.match(service, /requireSelectedCollegeId\(collegeId\)/);
+  assert.doesNotMatch(source, /registerStudentFace|removeStudentFace/);
 });

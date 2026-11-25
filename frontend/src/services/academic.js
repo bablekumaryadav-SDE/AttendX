@@ -1,92 +1,65 @@
-import api from "./api";
+import api from "./api.js";
+import { selectedCollegeParams } from "./tenantSelection.js";
 
-export async function getClasses() {
-  const response = await api.get("/classes/");
+export async function getClasses(collegeId) {
+  const response = await api.get("/classes/", selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function getClass(id) {
+export async function getClass(id, collegeId) {
   if (!id) {
     throw new Error("Class ID is required.");
   }
 
-  const response = await api.get(`/classes/${id}`);
+  const response = await api.get(`/classes/${id}`, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function createClass(payload) {
-  if (!payload) {
-    throw new Error("Class data is required.");
-  }
-
-  const response = await api.post("/classes/", payload);
+export async function createClass(payload, collegeId) {
+  const response = await api.post("/classes/", payload, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function updateClass(id, payload) {
-  if (!id) {
-    throw new Error("Class ID is required.");
-  }
-
-  if (!payload) {
-    throw new Error("Class data is required.");
-  }
-
-  const response = await api.put(`/classes/${id}`, payload);
+export async function updateClass(id, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new Error("Class ID is required.");
+  const response = await api.patch(`/classes/${Number(id)}`, payload, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function deleteClass(id) {
-  if (!id) {
-    throw new Error("Class ID is required.");
-  }
-
-  const response = await api.delete(`/classes/${id}`);
+export async function deactivateClass(id, collegeId) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new Error("Class ID is required.");
+  const response = await api.delete(`/classes/${Number(id)}`, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function getSubjects() {
-  const response = await api.get("/subjects/");
+export async function getSubjects(collegeId) {
+  const response = await api.get("/subjects/", selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function getSubject(id) {
+export async function getSubject(id, collegeId) {
   if (!id) {
     throw new Error("Subject ID is required.");
   }
 
-  const response = await api.get(`/subjects/${id}`);
+  const response = await api.get(`/subjects/${id}`, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function createSubject(payload) {
-  if (!payload) {
-    throw new Error("Subject data is required.");
-  }
-
-  const response = await api.post("/subjects/", payload);
+export async function createSubject(payload, collegeId) {
+  const response = await api.post("/subjects/", payload, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function updateSubject(id, payload) {
-  if (!id) {
-    throw new Error("Subject ID is required.");
-  }
-
-  if (!payload) {
-    throw new Error("Subject data is required.");
-  }
-
-  const response = await api.put(`/subjects/${id}`, payload);
+export async function updateSubject(id, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new Error("Subject ID is required.");
+  const response = await api.patch(`/subjects/${Number(id)}`, payload, selectedCollegeParams(collegeId));
   return response.data;
 }
 
-export async function deleteSubject(id) {
-  if (!id) {
-    throw new Error("Subject ID is required.");
-  }
-
-  const response = await api.delete(`/subjects/${id}`);
+export async function deactivateSubject(id, collegeId) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) < 1) throw new Error("Subject ID is required.");
+  const response = await api.delete(`/subjects/${Number(id)}`, selectedCollegeParams(collegeId));
   return response.data;
 }
 

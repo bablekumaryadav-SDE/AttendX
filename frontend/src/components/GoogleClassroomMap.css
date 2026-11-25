@@ -1,0 +1,47 @@
+.google-classroom-map-shell {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.google-classroom-map {
+  width: 100%;
+  height: clamp(260px, 40vw, 430px);
+  min-height: 240px;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  background: #f2f4f7;
+  overflow: hidden;
+}
+
+.google-classroom-map-loading,
+.google-classroom-map-error {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.google-classroom-map-loading {
+  border: 1px solid #d0d5dd;
+  background: #f9fafb;
+  color: #475467;
+}
+
+.google-classroom-map-error {
+  border: 1px solid #fecdca;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.google-classroom-map-hint {
+  margin: 7px 0 0;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .google-classroom-map { height: 300px; }
+}

@@ -1,0 +1,152 @@
+"""Super Admin login boundaries and bootstrap safety guards; no configured DB use."""
+
+import importlib.util
+import os
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base, get_db
+from app.main import app
+from app.models import User
+from app.security import create_access_token, get_password_hash
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+BOOTSTRAP_PATH = BACKEND_DIR / "scripts" / "bootstrap_super_admin.py"
+SPEC = importlib.util.spec_from_file_location("bootstrap_super_admin", BOOTSTRAP_PATH)
+bootstrap = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(bootstrap)
+
+
+class SuperAdminAuthIsolationTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        with self.Session.begin() as session:
+            for user_id, role in enumerate(("admin", "teacher", "student", "super_admin"), start=101):
+                session.add(User(
+                    id=user_id,
+                    name=f"{role.title()} Fixture",
+                    email=f"{role.replace('_', '.')}@example.org",
+                    hashed_password=get_password_hash("isolated-test-password"),
+                    role=role,
+                    is_active=True,
+                ))
+            session.add(User(
+                id=105,
+                name="Inactive Super Admin",
+                email="inactive.super.admin@example.org",
+                hashed_password=get_password_hash("isolated-test-password"),
+                role="super_admin",
+                is_active=False,
+            ))
+
+        def override_db():
+            with self.Session() as session:
+                yield session
+
+        app.dependency_overrides.clear()
+        app.dependency_overrides[get_db] = override_db
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        self.client.close()
+        app.dependency_overrides.clear()
+        self.engine.dispose()
+
+    def test_common_login_and_server_role_boundary_for_all_active_roles(self):
+        expected = {
+            "admin": ("admin@example.org", 503),
+            "teacher": ("teacher@example.org", 503),
+            "student": ("student@example.org", 503),
+            "super_admin": ("super.admin@example.org", 503),
+        }
+        for role, (email, admin_status) in expected.items():
+            with self.subTest(role=role):
+                login = self.client.post("/auth/login", json={
+                    "email": email,
+                    "password": "isolated-test-password",
+                })
+                self.assertEqual(login.status_code, 200, login.text)
+                token = login.json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                profile = self.client.get("/auth/me", headers=headers)
+                self.assertEqual(profile.status_code, 200)
+                self.assertEqual(profile.json()["role"], role)
+                dashboard = self.client.get("/admin-dashboard", headers=headers)
+                self.assertEqual(dashboard.status_code, admin_status, dashboard.text)
+                self.assertEqual(dashboard.json(), {"detail": "This business API is unavailable until College-scoped authorization is enabled."})
+
+    def test_forged_role_claim_invalid_credentials_inactive_and_invalid_tokens(self):
+        # The role claim in a signed token cannot promote the database account.
+        forged = create_access_token({"sub": "104", "role": "admin"})
+        headers = {"Authorization": f"Bearer {forged}"}
+        profile = self.client.get("/auth/me", headers=headers)
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.json()["role"], "super_admin")
+        self.assertEqual(self.client.get("/admin-dashboard", headers=headers).status_code, 503)
+
+        bad_password = self.client.post("/auth/login", json={
+            "email": "super.admin@example.org",
+            "password": "wrong-password",
+        })
+        self.assertEqual(bad_password.status_code, 401)
+
+        inactive = self.client.post("/auth/login", json={
+            "email": "inactive.super.admin@example.org",
+            "password": "isolated-test-password",
+        })
+        self.assertEqual(inactive.status_code, 403)
+
+        invalid_token = self.client.get("/auth/me", headers={
+            "Authorization": "Bearer not-a-valid-token",
+        })
+        self.assertEqual(invalid_token.status_code, 401)
+
+
+class BootstrapSafetyGuardTests(unittest.TestCase):
+    def test_missing_environment_marker_refuses_before_database_inspection(self):
+        with patch.dict(os.environ, {"ATTENDX_BOOTSTRAP_ENV": ""}, clear=False), \
+                patch.object(bootstrap, "engine") as mocked_engine:
+            self.assertEqual(bootstrap.main(), 2)
+            mocked_engine.dialect.assert_not_called()
+
+    def test_sqlite_refused_without_opening_a_session(self):
+        with patch.dict(os.environ, {"ATTENDX_BOOTSTRAP_ENV": "development"}, clear=False), \
+                patch.object(bootstrap, "engine") as mocked_engine:
+            mocked_engine.dialect.name = "sqlite"
+            with patch.object(bootstrap, "SessionLocal") as session_factory:
+                self.assertEqual(bootstrap.main(), 2)
+                session_factory.assert_not_called()
+
+    def test_non_loopback_postgresql_host_refused_without_connecting(self):
+        class FakeUrl:
+            host = "db.example.org"
+
+        class FakeEngine:
+            class Dialect:
+                name = "postgresql"
+
+            dialect = Dialect()
+            url = FakeUrl()
+
+        with patch.dict(os.environ, {"ATTENDX_BOOTSTRAP_ENV": "development"}, clear=False), \
+                patch.object(bootstrap, "engine", FakeEngine()), \
+                patch.object(bootstrap, "inspect") as inspector:
+            self.assertEqual(bootstrap.main(), 2)
+            inspector.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

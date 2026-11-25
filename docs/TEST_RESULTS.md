@@ -1,0 +1,1596 @@
+# AttendX Baseline Test Results
+
+**Updated:** 2026-11-04
+**Scope:** Tooling recovery only. No application source or database changes were made.
+
+## Environment findings
+
+- The most complete project test environment is the repository-root `.venv` (`.venv\Scripts\python.exe`): FastAPI 0.141.1, Starlette 1.6.0, HTTPX 0.28.1 and the runtime/test dependencies used by the suite are available there. `backend/.venv` lacks both `pytest` and `httpx`; `backend/venv` also lacks `httpx` and `numpy`.
+- Starlette's `TestClient` first tries `httpx2`. If unavailable, Starlette 1.6.0 explicitly falls back to legacy `httpx` and emits a deprecation warning. The original `httpx2` exception happened because the Python command was run with `backend/.venv`, which had neither `httpx2` nor `httpx`. With root `.venv`, `TestClient` imports and `/health` returned HTTP 200. No Starlette/HTTPX packages were changed.
+- C: reports zero free bytes. A normal `pip install` into the virtual environment failed with `No space left on device`; package versions afterward were unchanged. No cleanup/deletion was attempted.
+- D: has substantial free space. A temporary pytest 9.2.0 package overlay was installed under `D:\Temp\AttendX-pytest-packages` and invoked with the root `.venv` interpreter. This allowed the test run without installing into the full C: drive. The temporary overlay is not a persistent change to the project environment.
+- Vite 7.3.7's Windows path resolver executes `net use` to detect drive mappings. Inside the restricted process sandbox, even a minimal Node child-process probe failed with `EPERM`; the same probe outside the sandbox succeeded. This confirms the initial Vite `spawn EPERM` was caused by the process sandbox. Build output/cache/temp were redirected to D:; the build then succeeded.
+
+## Commands and actual results
+
+| Check | Command | Result |
+|---|---|---|
+| Backend TestClient/import and health | From `backend`: `..\.venv\Scripts\python.exe -c "from fastapi.testclient import TestClient; from app.main import app; c=TestClient(app); r=c.get('/health'); print(r.status_code,r.json())"` | **Passed:** HTTP 200; `{"status":"healthy","service":"AttendX API","version":"0.80.0"}`. One Starlette deprecation warning because it used the supported `httpx` fallback. |
+| Backend tests | From `backend`: set `$env:PYTHONPATH='D:\Temp\AttendX-pytest-packages'`, then `..\.venv\Scripts\python.exe -m pytest -q` | **Passed:** 28 passed, 16 warnings, 4 subtests passed, 7.34 seconds. Tests use isolated fixtures; no configured database changes were made. |
+| Backend alternative runner | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v` | **Passed:** 28 tests, 4.55 seconds. |
+| Frontend tests | From `frontend`, outside the restricted process sandbox: `node --test tests/*.test.mjs` | **Passed:** 14 passed, 0 failed. |
+| Frontend production build | From `frontend`, outside sandbox, set `$env:TEMP='D:\Temp'`, `$env:TMP='D:\Temp'`, `$env:npm_config_cache='D:\Temp\npm-cache'`; run `npm --cache 'D:\Temp\npm-cache' run build -- --outDir 'D:\Temp\AttendX-build'` | **Passed:** 1,925 modules transformed; output written to `D:\Temp\AttendX-build`. Existing warnings: ignored `use client` directives and a 645 kB minified JS chunk (>500 kB advisory). |
+| Database connectivity/migration state | Not checked | **Not performed:** requested scope forbids database changes; no live DB operation was needed for isolated tests. |
+| Browser/camera/QR/GPS workflows | Not run | **Not performed:** require live browser/device sessions. |
+
+## Exact environment recovery commands
+
+Run from the project root in PowerShell:
+
+```powershell
+# Backend tests (pytest package overlay is temporary on D: because C: is full)
+$env:PYTHONPATH = 'D:\Temp\AttendX-pytest-packages'
+Push-Location .\backend
+..\.venv\Scripts\python.exe -m pytest -q
+Pop-Location
+
+# Frontend tests; run in an environment that permits Node child processes
+Push-Location .\frontend
+node --test tests/*.test.mjs
+
+# Production build; use D: for temporary cache and generated output
+$env:TEMP = 'D:\Temp'
+$env:TMP = 'D:\Temp'
+$env:npm_config_cache = 'D:\Temp\npm-cache'
+npm --cache 'D:\Temp\npm-cache' run build -- --outDir 'D:\Temp\AttendX-build'
+Pop-Location
+```
+
+For a persistent pytest install, first free disk space through the user's normal storage management, then use the existing root `.venv` interpreter:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pytest
+```
+
+The project environment is unchanged by this step. There is no need to install `httpx2` just to restore the current Starlette TestClient: Starlette's `httpx` fallback works with the root `.venv`, though it is deprecated. For a long-term clean environment, align FastAPI/Starlette/HTTPX versions and add pinned test dependencies in a separately reviewed environment/dependency change.
+
+## Filesystem and data safety
+
+- No backend/frontend application source, dependency manifest, database, migration, or schema was edited.
+- No database reset, migration, destructive command, or cleanup was run.
+- Untracked user files `tatus` and `tash list` remain untouched.
+- Build output and pytest overlay were directed to `D:\Temp`; npm cache/log output was redirected to D: on the successful build run.
+
+## Remaining environment limitations
+
+- `pytest` is available for this run through the temporary D: overlay, but is not installed persistently into `.venv`; a normal install could not complete because C: is full.
+- Standard `npm run build` on C: failed with `ENOSPC`; the same build passed after cache, temp and output were redirected to D:.
+- Running Vite/Node worker processes inside the restricted sandbox still fails with `EPERM`; run these commands in a normal local PowerShell session or approved process context.
+- Starlette's TestClient emits a deprecation warning for legacy `httpx` fallback; test behavior passed in this environment. No dependency pins were changed.
+# Phase 10 â€” audit and Super Admin bootstrap code (2026-11-05)
+
+This update records checks run after the new master requirement audit and the first role/bootstrap implementation. All backend tests used the repository `.venv` and isolated SQLite fixtures; the configured PostgreSQL database was not accessed.
+
+| Check | Result | Notes |
+|---|---|---|
+| Python syntax | PASS | `py_compile` completed for `backend/scripts/bootstrap_super_admin.py`, `backend/app/main.py`, and `backend/app/dependencies.py`. |
+| Bootstrap no-write guards | PASS | With a disposable SQLite URL, the script refused when the development marker was missing and refused the SQLite target when the marker was present. It did not inspect/write a database or create an account. |
+| Backend regression | PASS | `python -m unittest discover -s tests -p 'test_*.py' -v`: 50 passed in 4.255s. Includes existing auth, QR concurrency, GIS, guardian and security tests. SQLite only. |
+| Frontend tests, sandbox attempt | BLOCKED | Node test workers returned `spawn EPERM` in restricted sandbox. |
+| Frontend tests, approved process context | PASS | `node --test tests/*.test.mjs`: 21 passed, 0 failed. |
+| JSX production build | NOT RUN | C: had 261,914,624 bytes free, below the required 1.5 GB threshold. No build/install was started. |
+| Bootstrap transaction / PostgreSQL | NOT TESTED | Script was not executed; no account or database was modified. Requires a local PostgreSQL target and pre-existing audit table. |
+| Browser role navigation | NOT TESTED | No live browser workflow run. |
+| `git diff --check` | PASS | No whitespace errors in the diff. |
+
+The temporary pytest overlay under D: could not be used for this run (`pytest` and `_pytest` had no usable module entry point in this execution environment). The existing `unittest` test suite completed successfully instead. One Starlette `httpx` deprecation warning and Python SQLite date/datetime adapter deprecation warnings were emitted.
+
+No production/staging database, migration, Docker service, deployment, account creation, or external provider was used.
+
+## Phase 5 tenant foundation verification (2026-11-05)
+
+| Check | Status | Result / limits |
+|---|---|---|
+| Tenant foundation tests | PASS | 12 isolated SQLite tests: College validation; uniqueness and DB constraints; membership lifecycle metadata; active/inactive membership and College; role enforcement; missing/ambiguous context; client College ID spoofing; own-College scoped read; Super Admin and legacy Admin separation. |
+| Backend regression suite | PASS | **80 passed, 0 failures/errors**, 11.103 seconds (final rerun). Includes existing auth, attendance, GIS, guardian, reconciliation, security and tenant tests. SQLite fixtures only. Existing Starlette/SQLite deprecation notices and OpenCV backend warnings. |
+| Frontend serial suite | PASS | **28 passed, 0 failed, 0 skipped**, 0.751 seconds; test concurrency 1. No frontend tenant changes were made. |
+| Python/JS syntax | PASS | Python AST parsed 62 app/script/test files; Babel parsed 53 JS/JSX/MJS files. |
+| `git diff --check` | PASS | No whitespace errors. Git emitted the README LF-to-CRLF normalization warning. |
+| PostgreSQL DDL / compatibility | NOT TESTED | Draft SQL only. PostgreSQL tools/Docker were unavailable in the prior environment check; SQLite does not prove PostgreSQL compatibility. |
+| Production DB, backfill, real College/account | NOT RUN | No PostgreSQL connection, migration, record write, ownership backfill, College row, role change or account creation. |
+| Build/install/cache clear | SKIPPED | No frontend build, dependency installation or cache clearing was run. |
+
+The first focused tenant run had one **test expectation failure**: SQLAlchemy column defaults are populated at insert/flush rather than object construction. The test was corrected to assert after SQLite flush. A subsequent tenant-only run passed 12/12, and the final full backend suite passed 80/80. No implementation failure remains from that iteration.
+
+Exact successful commands:
+
+```powershell
+# From backend; outside the restricted process sandbox for temporary fixtures
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:DATABASE_URL='sqlite://'
+$env:SECRET_KEY=('phase5-isolated-test-' + ('v' * 40))
+$env:ALGORITHM='HS256'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'
+..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+
+# From frontend; serial worker concurrency 1
+node --test --test-concurrency=1 tests/*.test.mjs
+
+# From repository root
+.\.venv\Scripts\python.exe -c "import ast,pathlib; roots=[pathlib.Path('backend/app'),pathlib.Path('backend/scripts'),pathlib.Path('backend/tests')]; files=[p for root in roots if root.exists() for p in root.rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8-sig'), filename=str(p)) for p in files]; print(f'Python AST syntax PASS: {len(files)} files')"
+
+# From frontend
+node -e "const fs=require('node:fs'); const path=require('node:path'); const parser=require('@babel/parser'); let files=[]; function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(['.jsx','.js','.mjs'].includes(path.extname(e.name)))files.push(p)}} walk('src'); walk('tests'); for(const f of files)parser.parse(fs.readFileSync(f,'utf8'),{sourceType:'module',plugins:['jsx']}); console.log('JS/JSX syntax PASS:',files.length,'files')"
+
+# From repository root
+git diff --check
+```
+
+## Phase 2 verification rerun (2026-11-05)
+
+This is the latest verification for the Super Admin route guard and bootstrap safety work.
+
+| Check | Status | Result |
+|---|---|---|
+| Backend isolated tests | PASS | 55 passed, 0 failed. Includes five new tests for shared login roles, backend Admin-role boundary, forged role claims, bad/inactive credentials, invalid token and bootstrap no-connect guards. |
+| Frontend tests, serial | PASS | `node --test --test-concurrency=1 tests/*.test.mjs`: 28 passed, 0 failed. Four tests exercise the actual `getProtectedRouteDecision` logic used by `ProtectedRoute`; wiring checks remain source-contract tests. |
+| Frontend tests, parallel | ENVIRONMENTAL FAILURE | Parallel Node workers exhausted JavaScript heap/Windows virtual memory before assertions completed. No assertion failure was observed; serial rerun passed. |
+| Python and JSX syntax | PASS | Python AST parsed bootstrap and new backend test; Babel parsed updated JSX and route helper. |
+| `git diff --check` | PASS | No whitespace errors. Git emitted a line-ending normalization warning for README. |
+| Build/install/cache operation | SKIPPED | C: had 38,707,200 bytes at the initial check; final read-only check reported 5,936,844,800 bytes. No build, install, cache clear or large output was performed, as instructed. |
+| PostgreSQL/bootstrap account | NOT TESTED | Configured PostgreSQL was not connected. No account was created and no migration was run. |
+| Browser role flow | NOT TESTED | No browser sign-in/sign-out or refresh workflow was run. |
+
+Backend command (from `backend`; tests use SQLite fixtures and an explicit SQLite `DATABASE_URL`):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:DATABASE_URL='sqlite://'
+$env:SECRET_KEY=('phase2-isolated-test-' + ('y' * 40))
+$env:ALGORITHM='HS256'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'
+Push-Location .\backend
+..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+Pop-Location
+```
+
+Frontend command (run from `frontend`, outside the restricted process sandbox, serial worker count 1):
+
+```powershell
+node --test --test-concurrency=1 tests/*.test.mjs
+```
+
+## Phase 3 regression rerun (2026-11-05)
+
+No application or database code was changed in Phase 3; tenant isolation remains design-only. To confirm existing behavior before closing this foundation phase, the current regression suites were rerun serially:
+
+| Check | Status | Result / limit |
+|---|---|---|
+| Backend suite | PASS | 55 tests, 0 failures, 9.189 seconds using in-memory/isolated SQLite fixtures. Starlette `httpx` and SQLite date/datetime deprecation warnings; OpenCV backend warnings on the no-face test. |
+| Frontend suite | PASS | 28 tests, 0 failures, serial worker concurrency 1. Includes actual route-decision helper behavior plus source wiring checks. |
+| Tenant negative tests | NOT TESTED / BLOCKED | No tenant membership/context, database ownership or backend scoping exists yet. Scenarios are specified in `TENANT_AUTHORIZATION_DESIGN.md`; no front-end-only mock was counted. |
+| PostgreSQL migration, database, account | NOT TESTED | No configured PostgreSQL connection, migration, database write or account creation. |
+| Build/install | NOT RUN | No build or dependency installation was needed. |
+
+Exact backend command (from `backend`):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:DATABASE_URL='sqlite://'
+$env:SECRET_KEY=('phase3-isolated-test-' + ('q' * 40))
+$env:ALGORITHM='HS256'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'
+..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Exact frontend command (from `frontend`, outside the process sandbox):
+
+```powershell
+node --test --test-concurrency=1 tests/*.test.mjs
+```
+
+No assertion failures occurred in these reruns. This is regression coverage for existing authentication, role boundaries, attendance, GIS, guardian and frontend guard behavior, not a tenant-isolation test result.
+
+## Phase 4 ownership preview and environment checks (2026-11-05)
+
+| Check | Status | Result / limits |
+|---|---|---|
+| Backend serial suite | PASS | 68 tests, 0 failures, 0 errors, 8.120 seconds. Uses isolated SQLite fixtures; includes 13 synthetic reconciliation preview tests. Existing Starlette/SQLite deprecation notices and OpenCV backend warnings appeared. |
+| Frontend serial suite | PASS | 28 passed, 0 failed, 0 skipped; Node test duration 0.630 seconds. Serial concurrency 1. |
+| Reconciliation preview tests | PASS | 13 tests exercise output/status decisions, duplicate IDs, missing/dangling parents, mapping conflicts, missing proposals, sensitive-field rejection, allowlisted CSV output, CLI output creation, and overwrite refusal. All inputs were synthetic. |
+| Python/JS syntax and diff | PASS | Python AST parsed 59 files using UTF-8-SIG; Babel parsed 53 JS/JSX/MJS files; `git diff --check` passed. Git emitted a README LF-to-CRLF normalization warning only. |
+| PostgreSQL tools / test DB | BLOCKED | PostgreSQL utilities and Docker unavailable; no verified test database. |
+| Ownership row counts / reconciliation | NOT TESTED | No database connection or row queries; actual ownership and orphan/conflict counts remain UNKNOWN. |
+| Backup/restore rehearsal | NOT TESTED | No dump or restore performed. |
+| Build/install/cache clear/migration/account creation | SKIPPED | No build, install, cache clear, PostgreSQL connection, backup/restore, migration, account creation, or role change. |
+
+The initial backend attempts for the CLI tests failed with `PermissionError` while Python attempted to write synthetic temporary files (first under protected C: temp, then within the workspace under the restricted process sandbox). These were **environmental test-execution errors, not assertion failures**. After moving test execution outside the restricted sandbox, the full serial backend suite passed. Frontend tests also ran outside the restricted process sandbox due to Node worker process restrictions.
+
+Exact successful commands (PowerShell; backend command run from `backend`, frontend from `frontend`):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:DATABASE_URL='sqlite://'
+$env:SECRET_KEY=('phase4-isolated-test-' + ('r' * 40))
+$env:ALGORITHM='HS256'
+$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'
+..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+
+node --test --test-concurrency=1 tests/*.test.mjs
+
+# From repository root:
+.\.venv\Scripts\python.exe -c "import ast,pathlib; roots=[pathlib.Path('backend/app'),pathlib.Path('backend/scripts'),pathlib.Path('backend/tests')]; files=[p for root in roots if root.exists() for p in root.rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8-sig'), filename=str(p)) for p in files]; print(f'Python AST syntax PASS: {len(files)} files')"
+
+# From frontend:
+node -e "const fs=require('node:fs'); const path=require('node:path'); const parser=require('@babel/parser'); let files=[]; function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(['.jsx','.js','.mjs'].includes(path.extname(e.name)))files.push(p)}} walk('src'); walk('tests'); for(const f of files)parser.parse(fs.readFileSync(f,'utf8'),{sourceType:'module',plugins:['jsx']}); console.log('JS/JSX syntax PASS:',files.length,'files')"
+
+# From repository root:
+git diff --check
+```
+
+See `PHASE_4_OWNERSHIP_EVIDENCE.md` for schema-source inventory and `TENANT_MIGRATION_READINESS_CHECKLIST.md` for blockers. The reconciliation preview does not apply or approve assignments. **Do not interpret source-level schema review or synthetic tests as a live data audit.**
+
+Source syntax commands:
+
+```powershell
+..\.venv\Scripts\python.exe -c "import ast,pathlib; files=['backend/scripts/bootstrap_super_admin.py','backend/tests/test_super_admin_phase2_isolated.py']; [ast.parse(pathlib.Path(f).read_text(encoding='utf-8'), filename=f) for f in files]; print('Python syntax PASS')"
+Push-Location .\frontend
+node -e "const fs=require('node:fs'); const p=require('@babel/parser'); for (const f of ['src/pages/auth/Login.jsx','src/pages/auth/SuperAdminHome.jsx','src/routes/AppRoutes.jsx','src/routes/ProtectedRoute.jsx','src/routes/roleAccess.js']) p.parse(fs.readFileSync(f,'utf8'), {sourceType:'module',plugins:['jsx']}); console.log('JS/JSX syntax PASS');"
+Pop-Location
+git diff --check
+```
+
+## Phase 6 tenant API pilot (2026-11-05)
+
+| Check | Status | Result / limits |
+|---|---|---|
+| Pilot API security tests | PASS | 12/12 passed in 5.082 seconds with isolated SQLite and signed test JWTs. Tests exercise mounted GET/PATCH API behavior and persisted row values, not source patterns. |
+| Complete backend regression | PASS | **92 passed, 0 failures/errors**, 15.848 seconds. Includes pilot and tenant foundation, authentication/legacy Admin boundaries, dashboards, attendance, QR/GPS/geofence, face, guardian, notifications, reconciliation and security tests. SQLite fixtures only. Existing Starlette/SQLite deprecation notices and OpenCV backend warnings appeared. |
+| Frontend serial suite | PASS | **28 passed, 0 failed, 0 skipped**, 0.778 seconds; concurrency 1. Includes existing role route, login/session, camera, GPS/map and guardian tests. No pilot UI was added. |
+| Python/JS syntax | PASS | Python AST parsed 65 files; Babel parsed 53 JS/JSX/MJS files. |
+| `git diff --check` | PASS | No whitespace errors; README LF-to-CRLF normalization warning only. |
+| PostgreSQL / migration | NOT TESTED | No PostgreSQL connection or migration. Pilot returns sanitized 503 if its additive tables are absent. Draft DDL remains **DRAFT / NOT APPLIED**. |
+| Broader tenant isolation | BLOCKED / NOT IMPLEMENTED | Existing routes listed in `LEGACY_ROUTE_COMPATIBILITY.md` remain legacy and unscoped. |
+| Build/install/cache clear | SKIPPED | No frontend build, dependency install or cache clear was run. |
+
+The initial pilot-only invocation had one test-input validation failure because the synthetic login used reserved `.test`. The fixture was changed to `example.org`; the pilot rerun passed 12/12 and the final full backend suite passed 92/92. This was a test-data issue, not an authorization assertion failure.
+
+Exact commands (PowerShell; backend from `backend`, frontend from `frontend`):
+
+- Focused pilot: set `$env:PYTHONDONTWRITEBYTECODE='1'`, `$env:DATABASE_URL='sqlite://'`, `$env:SECRET_KEY=('phase6-pilot-test-' + ('w' * 40))`, `$env:ALGORITHM='HS256'`, and `$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'`; run `..\.venv\Scripts\python.exe -m unittest tests.test_tenant_api_pilot_isolated -v`.
+- Full backend: set the same variables, using `$env:SECRET_KEY=('phase6-isolated-test-' + ('x' * 40))`; run `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v`.
+- Frontend: `node --test --test-concurrency=1 tests/*.test.mjs`.
+- Python syntax from repository root: `.\.venv\Scripts\python.exe -c "import ast,pathlib; roots=[pathlib.Path('backend/app'),pathlib.Path('backend/scripts'),pathlib.Path('backend/tests')]; files=[p for root in roots if root.exists() for p in root.rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8-sig'), filename=str(p)) for p in files]; print(f'Python AST syntax PASS: {len(files)} files')"`.
+- JS/JSX syntax: the Babel parser loop over `src` and `tests` completed with `JS/JSX syntax PASS: 53 files` (exact loop is in the previous Phase 5 verification section).
+- Diff: `git diff --check`.
+
+## Phase 7 PostgreSQL readiness and regression (2026-11-05)
+
+| Check | Status | Result / limits |
+|---|---|---|
+| PostgreSQL service | FOUND / IDENTITY UNKNOWN | Windows service `postgresql-x64-18` is **Running**. No database or cluster identity was verified. |
+| PostgreSQL clients / Docker | BLOCKED | `postgres`, `psql`, `pg_dump`, `pg_restore`, `initdb`, `pg_ctl`, `createdb`, and Docker were **NOT_FOUND** via `Get-Command`. |
+| Dedicated disposable test DB | BLOCKED | No dedicated test URL in `backend/.env`; no process-level DB URL. Normal `.env` database URL was not displayed or used. No database connection was made. |
+| Disk availability | PASS | C: 2,102,861,824 bytes free; D: 264,111,865,856 bytes free. CIM query returned Access Denied; `cmd /c dir` succeeded. No build/install/cache operation was run. |
+| Backup/restore rehearsal | BLOCKED / NOT TESTED | No synthetic PostgreSQL database, backup, restore target, counts, or archive. No `pg_dump`/`pg_restore` command run. |
+| Draft SQL static review | PASS WITH DOCUMENTED DRIFT | SQLAlchemy PostgreSQL dialect compilation passed. v1 vs model index form drift documented; separate v2 draft prepared. Actual server syntax/execution remains NOT TESTED. |
+| PostgreSQL migration rehearsal / compatibility | BLOCKED / NOT TESTED | No identity-verified target and no client tools. Both drafts remain **DRAFT / NOT APPLIED**. |
+| Backend regression | PASS | **92 passed, 0 failures/errors**, 12.615 seconds, isolated SQLite. |
+| Frontend serial regression | PASS | **28 passed, 0 failed, 0 skipped**, 0.664 seconds, concurrency 1. |
+| Python / JS syntax | PASS | Python AST 65 files; Babel 53 JS/JSX/MJS files. |
+| `git diff --check` | PASS | No whitespace errors; README line-ending warning only. |
+
+Safe readiness commands included `Get-Command` checks for PostgreSQL/Docker executables, `Get-Service` filtered to PostgreSQL service names, sanitized presence-only checks for environment URL keys, and `cmd /c dir C:\` / `cmd /c dir D:\`. Static model DDL was rendered with SQLAlchemy's PostgreSQL dialect; no SQL was executed.
+
+Exact Phase 7 backend command (PowerShell, from `backend`): after setting `$env:PYTHONDONTWRITEBYTECODE='1'`, `$env:DATABASE_URL='sqlite://'`, `$env:SECRET_KEY=('phase7-isolated-test-' + ('y' * 40))`, `$env:ALGORITHM='HS256'`, and `$env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'`, run `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v`. Frontend (from `frontend`): `node --test --test-concurrency=1 tests/*.test.mjs`. Python AST, Babel parser, and `git diff --check` commands are recorded in the Phase 6 verification section above; they were rerun for Phase 7. Readiness checks are in `PHASE_7_POSTGRESQL_REHEARSAL.md`; static DDL compilation is in `TENANT_MIGRATION_SQL_REVIEW.md`. No SQL execution/connection command was run.
+
+
+## Phase 8 PostgreSQL environment setup (2026-11-05)
+
+| Check | Result | Details |
+|---|---|---|
+| PostgreSQL installation | PASS (read-only) | Service `postgresql-x64-18` Running/Automatic; PostgreSQL 18.6 client/server binaries found at `C:\Program Files\PostgreSQL\18\bin`. That directory is not on PATH. |
+| Cluster identity / safe target | BLOCKED / UNKNOWN | Service data directory and marker files were found; `PG_VERSION` is 18. No config contents or database identity was read. Existing cluster was not treated as disposable. |
+| Test database URL | BLOCKED / NOT CONFIGURED | `ATTENDX_TEST_DATABASE_URL` absent. Existing `DATABASE_URL` was only checked for presence and never printed or used. |
+| Test URL guard | PASS | Added parse-only fail-closed `require_test_database_url()` and **9/9** no-connect unit tests. It requires separate local PostgreSQL test identity/role/name and does not create an engine or connect. |
+| Backend full regression | PASS | **101 passed, 0 failures/errors**, 12.584 seconds, isolated SQLite. Warnings: Starlette/httpx deprecation, SQLite date adapter, and OpenCV backend. |
+| Frontend serial suite | PASS | **28 passed, 0 failed, 0 skipped**, 0.590222 seconds, concurrency 1. |
+| Syntax | PASS | Python AST **67** files; Babel **53** JS/JSX/MJS files. |
+| `git diff --check` | PASS | No whitespace errors; README LF-to-CRLF normalization warning only. A status scan also reported access denied for `backend/.pytest_cache`; that is an environment read-permission notice, not a test assertion failure. |
+| PostgreSQL integration / backup / restore / migration | BLOCKED / NOT RUN | No database connection/create/drop, backup, restore, migration, production write, or PostgreSQL runtime compatibility test. Both migration drafts remain DRAFT / NOT APPLIED. |
+| Build / install / cache clear | SKIPPED | None were run. |
+
+No assertion failures occurred in the final backend or frontend suites. Historical Phase 6/7 results above remain unchanged and are not superseded by this Phase 8 run.
+
+### Exact Phase 8 commands
+
+Read-only Windows checks included `Get-CimInstance Win32_Service -Filter "Name='postgresql-x64-18'"`, `sc.exe qc postgresql-x64-18`, `Test-Path`/`Get-Item` checks of the named PostgreSQL binaries under `C:\Program Files\PostgreSQL\18\bin`, marker checks for `PG_VERSION`, `postgresql.conf`, `pg_hba.conf`, and `global\pg_control` under the configured data directory, and `Get-Content -LiteralPath 'C:\Program Files\PostgreSQL\18\data\PG_VERSION' -TotalCount 1`. The PATH membership check compared the PostgreSQL bin path with `$env:PATH` without printing PATH. Environment configuration checks inspected only whether URL keys existed, never values. Disk space fallback commands were `cmd /c dir C:\` and `cmd /c dir D:\`.
+
+From `backend`, the focused guard command was:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase8-config-test-' + ('z' * 40)); $env:ALGORITHM='HS256'; ..\.venv\Scripts\python.exe -m unittest tests.test_test_database_config -v
+```
+
+The full backend command (isolated SQLite) was:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase8-isolated-test-' + ('a' * 40)); $env:ALGORITHM='HS256'; $env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'; ..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+From `frontend`: `node --test --test-concurrency=1 tests/*.test.mjs`.
+
+From repository root, Python syntax was checked with:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import ast,pathlib; roots=[pathlib.Path('backend/app'),pathlib.Path('backend/scripts'),pathlib.Path('backend/tests')]; files=[p for root in roots if root.exists() for p in root.rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8-sig'), filename=str(p)) for p in files]; print(f'Python AST syntax PASS: {len(files)} files')"
+```
+
+Babel syntax was checked with:
+
+```powershell
+node -e "const fs=require('node:fs'); const path=require('node:path'); const parser=require('@babel/parser'); let files=[]; function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(['.jsx','.js','.mjs'].includes(path.extname(e.name)))files.push(p)}} walk('src'); walk('tests'); for(const f of files)parser.parse(fs.readFileSync(f,'utf8'),{sourceType:'module',plugins:['jsx']}); console.log('JS/JSX syntax PASS:',files.length,'files')"
+```
+
+Final whitespace check: `git diff --check`.
+
+## Phase 9 discovery and regression (2026-11-05)
+
+| Check | Result | Evidence / limits |
+|---|---|---|
+| Installed version and binaries | PASS | PostgreSQL 18.6; `postgres`, `psql`, `pg_ctl`, `pg_dump`, `pg_restore` exist in `C:\Program Files\PostgreSQL\18\bin`; not on PATH. |
+| Existing service and configuration | PASS (read-only) | `postgresql-x64-18` Running/Automatic, service account `NT AUTHORITY\NetworkService`; data dir `C:\Program Files\PostgreSQL\18\data`; selected config says port 5432 and `listen_addresses='*'`. |
+| Existing cluster identity / reuse | UNKNOWN / NOT SAFE | No database connection or identity query. Do not reuse. |
+| Proposed separate port | PASS AT INSPECTION / RECHECK REQUIRED | No listener row for port 55432 at discovery. Port could be claimed later; check immediately before starting. |
+| D: target paths | NOT CREATED | New proposed cluster and backup directories do not exist. ACL suggests Authenticated Users Modify; effective operator permissions remain unverified. |
+| Test URL guard | PASS | **10/10** no-connect tests; missing URL never falls back, unsafe targets fail closed, errors do not echo credentials, and helper does not create engine/connect. |
+| Backend full regression | PASS | **102 passed, 0 failed/errors**, 12.270 seconds, isolated SQLite. Existing Starlette/httpx and SQLite deprecation warnings plus OpenCV backend warnings. |
+| Frontend serial regression | PASS | **28 passed, 0 failed, 0 skipped**, 0.588 seconds, concurrency 1. |
+| Syntax | PASS | Python AST **67** files; Babel **53** JS/JSX/MJS files. |
+| `git diff --check` | PASS | No whitespace errors; README LF-to-CRLF warning only. |
+| PostgreSQL runtime / setup / backup / restore / migration | NOT TESTED / REQUIRES USER APPROVAL | No database connection, cluster initialization, role/database create, backup, restore, migration, or rollback. Both migration drafts remain DRAFT / NOT APPLIED. |
+| Build/install/cache clear | SKIPPED | Not run. |
+
+### Environmental errors versus assertions
+
+Initial sandboxed backend run: two `test_reconciliation_preview` cases raised Windows Access Denied while creating/writing/cleaning their temporary directories; not assertion failures. Elevated final rerun passed 102/102. Initial sandboxed frontend run: all seven files failed at Node worker spawn with `EPERM`; no test assertions ran. Elevated serial rerun passed 28/28. No final assertion failures. The status scan also reports access denied for `backend/.pytest_cache` and two temporary paths left by the sandbox failure; those paths were not altered or deleted to preserve workspace contents.
+
+### Exact final regression commands
+
+From `backend` (SQLite only):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase9-regression-test-' + ('b' * 40)); $env:ALGORITHM='HS256'; $env:CORS_ALLOWED_ORIGINS='http://localhost:5173,http://127.0.0.1:5173'; ..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Focused test URL guard (10 tests):
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase9-config-test-' + ('z' * 40)); $env:ALGORITHM='HS256'; ..\.venv\Scripts\python.exe -m unittest tests.test_test_database_config -v
+```
+
+From `frontend`: `node --test --test-concurrency=1 tests/*.test.mjs`.
+
+Python AST (repository root):
+
+```powershell
+.\.venv\Scripts\python.exe -c "import ast,pathlib; roots=[pathlib.Path('backend/app'),pathlib.Path('backend/scripts'),pathlib.Path('backend/tests')]; files=[p for root in roots if root.exists() for p in root.rglob('*.py')]; [ast.parse(p.read_text(encoding='utf-8-sig'), filename=str(p)) for p in files]; print(f'Python AST syntax PASS: {len(files)} files')"
+```
+
+Babel (from `frontend`):
+
+```powershell
+node -e "const fs=require('node:fs'); const path=require('node:path'); const parser=require('@babel/parser'); let files=[]; function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);if(e.isDirectory())walk(p);else if(['.jsx','.js','.mjs'].includes(path.extname(e.name)))files.push(p)}} walk('src'); walk('tests'); for(const f of files)parser.parse(fs.readFileSync(f,'utf8'),{sourceType:'module',plugins:['jsx']}); console.log('JS/JSX syntax PASS:',files.length,'files')"
+```
+
+Whitespace check: `git diff --check`.
+
+Discovery commands/findings and the proposed isolated setup are in `PHASE_9_POSTGRESQL_CLUSTER_DISCOVERY.md` and `POSTGRESQL_TEST_CLUSTER_PLAN.md`. All target-changing commands in the plan are examples for a future, separately approved operation and were not executed.
+
+## Phase 10 PostgreSQL cluster setup result (2026-11-05; historical, superseded by the 2026-11-09 recovery result below)
+
+- **Initialization:** PASS. Approved cluster `D:\AttendX\PostgreSQL-Test\cluster` initialized using PostgreSQL 18.6, SCRAM-SHA-256, UTF-8 and data checksums. No password appears in the report or command output. The protected transient password file was removed.
+- **Credential retention:** BLOCKED. The bootstrap password was not retained after the short-lived setup process ended. The cluster remains stopped and intact; no first identity connection was made.
+- **Port/bind:** NOT TESTED. Port 55432 was not checked immediately before startup because startup was not reached. No listener was returned by a subsequent read-only port check. The planned loopback-only binding is unverified.
+- **Existing service:** PASS (unchanged). `postgresql-x64-18` remains Running/Automatic and points to its original C: installation/data directory; no service or port 5432 configuration was modified.
+- **Role/database/privileges:** NOT CREATED / NOT TESTED. `attendx_test_role` and `attendx_integration_test` do not exist from this run because no first connection was made.
+- **Errors:** The first command attempt failed before `initdb` due to an unsupported .NET RNG method; the target remained empty. The corrected RNG implementation initialized successfully. No tests/assertions were run in this phase.
+- **Remaining restrictions:** no test URL, application database connection, backup, restore, migration, build, dependency installation, cache clear, service modification, or PATH change occurred.
+- **Next approval:** explicitly approve a credential recovery method before any start/connection/role/database step. See `PHASE_10_POSTGRESQL_TEST_CLUSTER_SETUP.md`.
+
+Phase 9 regression results remain historical and unchanged. This partial setup does not establish PostgreSQL test readiness or production readiness.
+
+## Phase 10 recovery attempt (2026-11-05)
+
+| Operation | Status | Result |
+|---|---|---|
+| Read-only cluster/binary verification | PASS | Approved target and cluster markers exist; PostgreSQL 18 cluster. Required docs were read. |
+| Inspect original authentication configuration | PASS | `pg_hba.conf` SHA-256 `0C8DC6E6E57399790417A6E13B3A8E1B5E27AA19708A2122148FBFE3BDCECD42`; local, loopback, and replication entries use `scram-sha-256`. |
+| Temporary HBA override | BLOCKED / NOT APPLIED | Original bootstrap password is unavailable. Current instructions prohibit `trust`; other configured auth methods require credentials or external identity material that is not approved/configured. No compliant HBA-only reset route remains. |
+| Cluster start / port check / identity SQL | NOT TESTED | Stopped before start. Port 55432 was not checked because startup was not attempted. |
+| New bootstrap credential | NOT SET | No password was entered, generated, displayed, or persisted in this recovery turn. |
+| `attendx_test_role` and `attendx_integration_test` | NOT CREATED | No connection was made. Privileges not tested. |
+| Existing PostgreSQL service | PASS (unchanged) | `postgresql-x64-18` still reports Running/Automatic; no service/config/PATH change. |
+| Tests | NOT RUN | No application tests or PostgreSQL queries were run. |
+| `git diff --check` | PASS | No whitespace errors; README line-ending warning only. |
+
+The failure to proceed is a safety/authorization conflict, not a test assertion or server error. No `pg_hba.conf` edit was made. A separate approval is needed for an offline single-user password reset, which would bypass the requested SQL identity check before credential reset. The current instruction prohibits `trust`; do not use it.
+
+## Phase 10 offline recovery and database setup (2026-11-09)
+
+| Operation | Status | Result |
+|---|---|---|
+| Explicit approval | PASS | User approved offline reset for exactly `D:\AttendX\PostgreSQL-Test\cluster` and CurrentUser DPAPI storage at `D:\AttendX\PostgreSQL-Test\credentials.dpapi`. |
+| Read-only preflight | PASS | Binaries PostgreSQL 18.6; `PG_VERSION=18`; system identifier `7704647215459077108`; `pg_controldata` state shut down; no `postmaster.pid`; process tree traced to existing service, not test target. |
+| DPAPI encrypted credential store | PASS | CurrentUser encrypted file outside repository; ACL restricted to current user; decrypt round trip and no-plaintext-in-file checks passed. Secrets were not printed. |
+| Offline bootstrap password reset | PASS | Single-user mode only for approved data directory; bootstrap SCRAM verifier verified; no HBA changes and no `trust`. |
+| Loopback startup | PASS | Immediate port check; server log confirms `127.0.0.1:55432`; `pg_ctl` confirms exact data directory/args; fresh SQL confirms endpoint. Test cluster is left running loopback-only. |
+| Bootstrap identity/SCRAM | PASS | Database `postgres`, user `attendx_cluster_admin`, exact data directory/system identifier, address/port and SCRAM verifier/auth succeeded. |
+| Test role | PASS | `attendx_test_role` LOGIN; SUPERUSER/CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS/INHERIT false; SCRAM verifier and fresh login pass. |
+| Test database | PASS | `attendx_integration_test`, owner `attendx_test_role`; owner CONNECT/CREATE/TEMP privileges true; public CONNECT/TEMP revoked. |
+| Existing service/port 5432 | PASS (untouched) | Service remains Running/Automatic; service command and C: data directory unchanged; no service or port setting changed. |
+| HBA/auth config | PASS (unchanged) | Original file hash unchanged; all recovery/fresh auth used SCRAM; no `trust`. |
+| App tests / URL / migrations / backup / restore | NOT TESTED | Not authorized in this approval; no `.env` or application URL configured; both migration drafts remain DRAFT / NOT APPLIED. |
+
+### Tooling errors distinguished from DB results
+
+No database identity mismatch occurred. Several early guards failed due to checker assumptions: unavailable/empty Windows listener APIs, regex variable collision, newline parsing, `/32` address formatting, and treating `pg_hba_file_rules.address` as inet rather than text. Those gates stopped the isolated cluster; the corrected checks passed. A non-superuser verification query also requested `data_directory`, which is intentionally privileged; the role login was retried with allowed fields and passed. No failed assertion or production target access occurred.
+
+## Phase 11 isolated PostgreSQL backup/restore rehearsal (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Explicit exact-operation approval | PASS | Approval received for only `attendx_integration_test`, the named D: custom backup artifact, and `attendx_restore_verify_20261109_133428`. |
+| Preflight identity | PASS | PostgreSQL 18.6, system identifier `7704647215459077108`, source owner `attendx_test_role`, endpoint `127.0.0.1:55432`, correct data directory, SCRAM; restore DB absent. |
+| Backup | PASS | Custom-format file at `D:\AttendX\PostgreSQL-Test\backups\attendx_integration_test_phase11_20261109_133428.dump`; 1,167 bytes; timestamp 2026-11-09 13:40:33 local; SHA-256 `03838FCE5FBF61D6645385BF64186605955401517CB04D3AFFB59E72D1786134`; archive listing passed. |
+| Restore | PASS | New absent database created owned by test role; empty target confirmed; restore completed without `--clean`/`--create`. |
+| Schema/object comparison | PASS | Source and target each have one user schema (`public`), zero user relations, zero user routines, zero custom types; catalog signatures match. No user tables existed, so user-row counts were not applicable. |
+| Ownership/privilege verification | PASS | Both DBs owned by `attendx_test_role`; owner CONNECT/CREATE/TEMP true; public CONNECT/TEMP revoked; role remains non-superuser with CREATEDB/CREATEROLE/REPLICATION/BYPASSRLS false. |
+| Existing port-5432 service | PASS (untouched) | Service remains Running/Automatic with original service path and C: data directory. No service action or port-5432 connection occurred. |
+| App tests / migrations / production | NOT TESTED | Not authorized in this phase. No app URL, migration, production connection, build, install, or cache clear. |
+
+A read-only preflight catalog inventory initially failed on a PostgreSQL internal `"char"` concatenation cast; the query was corrected before backup. No data changes occurred during that failed preflight. Full evidence and command forms are in `PHASE_11_POSTGRESQL_BACKUP_RESTORE.md`.
+
+## Phase 12 tenant migration draft validation (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| SQLAlchemy PostgreSQL dialect compile | PASS | Offline compile of tenant `College`/`CollegeMembership` tables and indexes passed; no database connection. This does not parse or execute migration SQL files. |
+| PostgreSQL SQL parser | NOT TESTED | `pglast`, `sqlglot`, `sqlparse`, and Alembic were unavailable; no dependency was installed. |
+| Alembic revision graph | NOT CONFIGURED | No Alembic configuration/revision environment or central migration ledger was found in searched project paths. |
+| Tenant foundation isolated tests | PASS | From `backend`: `$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase12-static-test-' + ('p' * 40)); $env:ALGORITHM='HS256'; .\.venv\Scripts\python.exe -m unittest tests.test_tenant_foundation_isolated -v` â€” **12 run, 12 passed, 0 failed, 0 skipped** (1.908 s). Synthetic in-memory SQLite only. |
+| Tenant API isolated tests | BLOCKED (environmental) | Attempted combined foundation/API command from `backend`; import aborted because installed Starlette `TestClient` requires missing `httpx2`. **0 tests ran in this attempt; 0 assertion failures; 0 skipped.** No dependency installation. |
+| PostgreSQL identity/catalog | BLOCKED / NOT REVERIFIED | Binary 18.6, `PG_VERSION=18`, and system identifier `7704647215459077108` match prior records. `pg_ctl` reported no target server running while `pg_controldata` reported `in production`; runtime identity was ambiguous, so no connection/start/query was attempted. Phase 11 owners and empty object counts are historical, not freshly verified. |
+| Migration SQL apply/rollback | NOT TESTED | Prohibited by Phase 12; none executed. |
+| `git diff --check` | PASS | Run after Phase 12 documentation edits; no whitespace errors (README line-ending normalization warning only). |
+
+The API test source exercises real GET/PATCH requests, cross-college selector denial, and unchanged data after denied writes; it is not a source-pattern-only test. It could not be rerun because of the environmental import dependency. The passing foundation tests directly exercise SQLite constraints and authorization/service behavior, but do not establish PostgreSQL compatibility or full legacy API isolation. See `PHASE_12_TENANT_MIGRATION_VALIDATION.md` for the draft audit and exact approval-gated plan.
+
+## Phase 13A migration prerequisite resolution (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Target cluster identity | PASS | PostgreSQL 18.6; `D:\AttendX\PostgreSQL-Test\cluster`; `PG_VERSION=18`; system identifier `7704647215459077108`. |
+| Cluster runtime | PASS â€” RUNNING | Elevated read-only `pg_ctl -D 'D:\AttendX\PostgreSQL-Test\cluster' status` returned PID 2452 and command line `postgres.exe -D D:/AttendX/PostgreSQL-Test/cluster -h 127.0.0.1 -p 55432`. PID file and server log agree; process has checkpointer/worker children. A non-elevated `pg_ctl status` had returned â€œno server runningâ€; elevated query resolved this process-visibility false negative. `pg_controldata` state `in production` was not treated as proof by itself. |
+| Loopback endpoint | PASS | `Test-NetConnection -ComputerName 127.0.0.1 -Port 55432 -InformationLevel Quiet` returned `True`. Elevated listener query identified PID 2452 on 127.0.0.1:55432, though Windows listener query output was intermittent. No SQL login/query was made. |
+| Existing service / port 5432 | PASS â€” UNTOUCHED; listener NOT CONFIRMED | Service remains Running/Automatic, configured for original C: cluster; service PID 5140 and service postmaster PID 7628 differ from target PID 2452. Read-only listener enumeration did not confirm a 5432 listener (`netstat` reported CLOSED for PID 7628). No TCP probe or database connection was sent to 5432; service/config were not modified. |
+| Open-file inventory | BLOCKED (environmental) | `openfiles /query` reported the system maintain-objects-list flag is disabled and returned access denied. PostgreSQL command-line inventory found only target PID 2452 referencing D:; arbitrary non-PostgreSQL file handles were not exhaustively enumerated. |
+| User schema requirements | PASS (static) | Compiled `User.__table__`: `users.id SERIAL NOT NULL PRIMARY KEY` (underlying integer) with indexes. Tenant DDL needs `users(id)` as PostgreSQL INTEGER backed by PK/unique key; FK columns are INTEGER. It references users four times, and unqualified references require the intended schema/search path. |
+| ORM-derived fixture compile | PASS (offline) | From `backend`: `$env:PYTHONDONTWRITEBYTECODE='1'; $env:DATABASE_URL='sqlite://'; $env:SECRET_KEY=('phase13a-static-' + ('r' * 40)); $env:ALGORITHM='HS256'; .\.venv\Scripts\python.exe -c "from sqlalchemy.schema import CreateTable,CreateIndex; from sqlalchemy.dialects import postgresql; from app.models import User; d=postgresql.dialect(); print(CreateTable(User.__table__).compile(dialect=d)); [print(CreateIndex(i).compile(dialect=d)) for i in sorted(User.__table__.indexes,key=lambda x:x.name)]"`. No connection or fixture file/database was created. |
+| Synthetic baseline suitability | PASS with limitation | A zero-row schema generated from ORM `User` can validate FK/type mechanics without copying production data. It cannot prove compatibility with an unknown actual legacy PostgreSQL schema. |
+| Tenant migration safety | DRAFT | Dependency order is `users` prerequisite â†’ `colleges` â†’ `college_memberships`; reverse drop is membership then College but destructive if populated. No College/default row, role promotion, ownership backfill, or business-table isolation is present. Super Admin remains separate from global legacy Admin. |
+| Tests | NOT RUN | Phase 13A was read-only environment/schema inspection; no regression test suite was requested or run. **0 tests run, 0 failed, 0 skipped.** |
+| `git diff --check` | Pending final doc edits | Run after the documentation update. |
+
+The earlier Phase 12 `pg_ctl` false negative is resolved by the elevated read-only check; the target is running, not stopped. The empty Phase 11 databases remain unsuitable as the migration baseline. Exact future steps and approval gate are in `PHASE_13A_MIGRATION_PREREQUISITE_RESOLUTION.md`.
+
+## Phase 13B offline tenant schema fixture and draft review (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Fixture generation | PASS | `database/fixtures/phase13b_tenant_users_schema.sql` generated from `User.id` SQLAlchemy metadata with the PostgreSQL dialect. It contains only zero-row `public.users(id INTEGER NOT NULL PRIMARY KEY)` DDL; no user fields/data or inserts. |
+| Fixture reproducibility/FK validation | PASS | `..\.venv\Scripts\python.exe scripts\generate_tenant_user_schema_fixture.py --check` from `backend`: generated content matches; four v2 `users(id)` FKs are INTEGER and expected delete actions. |
+| Focused offline tests | PASS | `..\.venv\Scripts\python.exe -m unittest tests.test_tenant_user_schema_fixture -v` from `backend`: **6 run, 6 passed, 0 failed, 0 skipped** (0.029 s). No database connection. |
+| Initial test attempt | FAIL (test assertion only; corrected) | **5 passed, 1 failed** because a no-INSERT assertion matched the fixture's explanatory comment, not SQL. Test now strips comments before checking; final complete rerun passed 6/6. No schema/migration failure. |
+| Offline ORM import / environment | PASS | Generator uses the actual User model definition with an in-memory declarative Base stub instead of `app.database`, so it creates no engine and changes no environment variables. A focused test snapshots process environment before/after compilation. |
+| PostgreSQL parsing/execution | NOT TESTED | No PostgreSQL connection or SQL parser/execution. Fixture and draft checks are SQLAlchemy compilation/static checks only. |
+| Existing v2 migration | DRAFT / UNCHANGED | Retain `ix_colleges_id` and `ix_college_memberships_id` in this draft for ORM metadata parity while documenting their redundancy with PK indexes and storage/write cost. Retain unique `ix_colleges_slug`; membership composite uniqueness and status indexes are not duplicates. Retain canonical-slug and nonblank-name checks plus the status/role checks. No migration semantic edits. |
+| Database changes / migration / backup / restore | NOT TESTED / NOT PERFORMED | Explicitly prohibited in Phase 13B. No DB connection, fixture apply, migration, backup or restore occurred. |
+| `git diff --check` | PASS | No whitespace errors in tracked diff; Git emitted the existing README LF-to-CRLF warning. Since the docs directory is untracked, separate whitespace checks passed for all new Phase 13B artifacts and the appended Phase 13B sections. |
+
+Exact successful commands:
+
+```powershell
+# From backend; offline file generation
+..\.venv\Scripts\python.exe scripts\generate_tenant_user_schema_fixture.py --write
+
+# From backend; read-only deterministic output and draft-FK validation
+..\.venv\Scripts\python.exe scripts\generate_tenant_user_schema_fixture.py --check
+
+# From backend; six offline unit tests
+..\.venv\Scripts\python.exe -m unittest tests.test_tenant_user_schema_fixture -v
+```
+
+The fixture tests verify the SQL output, exact model type/PK metadata, disk-file reproducibility, four v2 FK declarations/delete actions, no process environment changes, and rejection of data inserts/redundant fixture indexes. See `PHASE_13B_OFFLINE_SCHEMA_FIXTURE_AND_DRAFT_REVIEW.md` for limits and the approval-gated next phase.
+
+## Phase 14A disposable tenant database preparation (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Cluster identity/process | PREFLIGHT PASS | PostgreSQL 18.6, PID 2452, exact D: data directory, system identifier `7704647215459077108`, command line binds `127.0.0.1:55432`; elevated `pg_ctl status`, process query, and TCP probe agree. |
+| Existing service separation | PREFLIGHT PASS | `postgresql-x64-18` remains Running/Automatic with original C: data directory; separate service/postmaster PIDs 5140/7628. No TCP/database access to port 5432 and no service change. |
+| Proposed database | PREFLIGHT PASS | Read-only query from maintenance database confirmed `attendx_tenant_migration_verify_20261109` absent. No database created. |
+| Test-role attributes | PREFLIGHT PASS | LOGIN true; SUPERUSER, CREATEDB, CREATEROLE, REPLICATION, BYPASSRLS, INHERIT false; no role memberships. Database creation would require `attendx_cluster_admin`; no privilege change is authorized. |
+| Fixture | PREFLIGHT PASS | Exact reviewed Phase 13B fixture confirmed; SHA-256 `48A2A04871299E758A235C6991C4C2737DEA7D3684EF7457BB59E38DE8BF7A4B`. No table applied. |
+| App URL/config target check | PREFLIGHT PASS | `backend/.env`, `frontend/.env` do not reference target. Relevant process database URL variables are unset. URL contents were not printed. |
+| Backup path and collision | BLOCKED | Proposed `D:\AttendX\PostgreSQL-Test\backups\attendx_tenant_migration_verify_20261109_phase14a.dump` does not exist; destination directory exists, but inherits `Authenticated Users: Modify` (`AreAccessRulesProtected=false`). It does not meet the protected-directory requirement. No ACL/file change. |
+| Aâ€“D approval gate | AWAITING APPROVAL / BLOCKED | A, B, and D were not executed and await exact approval; C is blocked until the backup destination is protected. No combined approval request is actionable yet. |
+| Tests | NOT TESTED | This phase ran only read-only preflight queries and file/config checks; **0 tests run, 0 failed, 0 skipped**. |
+| `git diff --check` | PASS | No whitespace errors; README LF-to-CRLF warning only. New Phase 14A files/sections also passed direct trailing-whitespace checks. |
+
+The initial PowerShell preflight attempt stopped immediately because it assigned to the reserved `$PID` variable; no identity query or state change occurred in that attempt. The corrected elevated read-only query completed. All DPAPI values remained hidden; the only PostgreSQL query used port 55432 and the maintenance database. No connection was made to port 5432.
+
+The approval gate remains **BLOCKED** on backup-directory permissions. No database, fixture table, backup, or restore was created. See `PHASE_14A_DATABASE_PREPARATION.md` for exact process identity, ACL evidence, approval statuses, and next steps.
+
+## Phase 14A.1 protected backup directory ACL review (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| ACL inspection | PASS (read-only) | `D:\AttendX\PostgreSQL-Test\backups` is owned by `LAPTOP-G6VAKMU3\Asus`, has inheritance enabled, and inherits `Authenticated Users: Modify`, `BUILTIN\Users: ReadAndExecute`, plus `SYSTEM` and `Administrators: FullControl`. |
+| Inheritance chain | PASS (read-only) | The explicit Authenticated Users Modify rule originates at `D:\` and is inherited through `D:\AttendX` and `D:\AttendX\PostgreSQL-Test` into `backups`. No backup-directory-specific explicit ACE was observed. |
+| Current Windows access | PASS (ACL evidence) | Current account SID `S-1-5-21-801617878-2430668760-3645567244-1001` gets Modify via Authenticated Users; no direct user Full Control ACE. |
+| Backup process identity | PASS (documented) | Phase 11 client command path runs `pg_dump` from the current PowerShell execution context; dump output is written by that Windows client process, not by the PostgreSQL service. No PostgreSQL process was started for this review. |
+| Protected child feasibility | DRAFT | A new child with inheritance disabled and a user-SID Full Control ACE can avoid changing parent ACLs or existing files. Candidate names checked are absent. Parent Modify remains broad and can permit child-directory deletion/replacement; user-only ACL also reduces SYSTEM/Administrators recovery access. |
+| Changes / database operations | PASS (none) | No ACL, owner, directory, file, database, role, process, service, or application setting changed. Phase 14A Aâ€“D remain BLOCKED. |
+| Tests / whitespace | PASS (docs only) | No test suite or PostgreSQL command was run. `git diff --check` passed for tracked changes (with the existing README LF-to-CRLF warning); because the documentation directory is untracked, a separate trailing-whitespace scan passed for all three Phase 14A.1 documents. |
+
+See `PHASE_14A1_BACKUP_ACL_REVIEW.md` for exact ACE/inheritance details, read-only commands, risks, and the precise proposed ACL operation. Any creation or permission change needs separate explicit approval.
+
+## Phase 14A.2 protected backup directory (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Approved target and SID preflight | PASS | Exact target `D:\AttendX\PostgreSQL-Test\backups\phase14a-protected` was absent. Current SID matched `S-1-5-21-801617878-2430668760-3645567244-1001`. |
+| Directory / protected DACL | PASS | Created only the target directory. Inheritance is disabled; final DACL has exactly three explicit Full Control allow ACEs: current-user SID `S-1-5-21-801617878-2430668760-3645567244-1001`, SYSTEM `S-1-5-18`, and Administrators `S-1-5-32-544`. No broad-group grants. |
+| Parent ACL / existing siblings | PASS | Parent DACL SDDL compared equal before and after. Pre-existing sibling names and basic metadata compared unchanged. |
+| Excluded operations | PASS | No backup artifact, PostgreSQL connection, database/role/fixture, migration, cluster/service, port 5432, or application setting was accessed or changed. |
+| Tests / whitespace | PASS / NOT RUN | No test suite was run. `git diff --check` exited 0 for tracked changes; Git emitted its existing README LF-to-CRLF warning. A separate trailing-whitespace scan passed for the three untracked/updated Phase 14A.2 documents. |
+
+See `PHASE_14A2_PROTECTED_BACKUP_DIRECTORY.md` for the exact DACL by SID, inheritance state, parent comparison, and scope limits. Phase 14A operations Aâ€“D remain BLOCKED pending their separate approval.
+
+## Phase 14A.3 final preflight (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Test postmaster process / data directory | PREFLIGHT PASS | Elevated read-only inventory identified PID 2452, PostgreSQL 18.6 executable, and command line for `D:\AttendX\PostgreSQL-Test\cluster` with `-h 127.0.0.1 -p 55432`; PID file and elevated `pg_ctl status` agree. |
+| Cluster identifier | PREFLIGHT PASS | `pg_controldata` reports system identifier `7704647215459077108`. |
+| Socket endpoint | BLOCKED / PARTIAL | Process arguments and PID file specify loopback:55432 and TCP probe succeeded; Windows listener enumeration returned no owner row, so socket ownership was not independently confirmed. |
+| Fixture checksum | PREFLIGHT PASS | Exact expected SHA-256 `48A2A04871299E758A235C6991C4C2737DEA7D3684EF7457BB59E38DE8BF7A4B`. |
+| Protected backup ACL | PREFLIGHT PASS | Inheritance disabled; exactly the user, SYSTEM, and Administrators approved explicit Full Control ACEs by SID. |
+| Credential handling | BLOCKED | A diagnostic formatting error emitted decrypted DPAPI credential values in tool output while inspecting payload metadata. Values are omitted from this report; treat the credentials as exposed. No PostgreSQL authentication, credential rotation, or reset was attempted. |
+| Target absence / role attributes / admin SQL identity / backup filename collision | NOT TESTED | Fresh SQL catalog checks and filename collision check were not completed after the credential-handling blocker. |
+| Database preparation operations Aâ€“D | BLOCKED / NOT EXECUTED | No database, fixture, or backup was created; no backup listing/checksum. Gate 2 approval request was not presented because Gate 1 was incomplete. |
+| Tests | NOT RUN | **0 tests run, 0 failed, 0 skipped.** No application tests were requested or run. |
+| `git diff --check` | PASS | Exited 0 for tracked changes; Git emitted its existing README LF-to-CRLF warning. A separate trailing-whitespace scan passed for the three Phase 14A.3 documents (the docs directory is untracked). |
+
+The complete evidence and stop decision are in `PHASE_14A3_DATABASE_PREPARATION.md`. A clean fresh preflight and a safe credential-resolution plan are required before any Aâ€“D approval request.
+
+## Phase 14A.4 credential exposure review (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Known credential disclosure | FAIL (confidentiality) | Phase 14A.3 tool output emitted decrypted bootstrap and test-role credential values due a formatting error. Values are intentionally omitted. Treat both as compromised; tool transcript retention/access is UNKNOWN. |
+| DPAPI file metadata/ACL | PASS (metadata only) | Credential file owner is current user; protected from inheritance with exactly one explicit Full Control ACE for current user SID. File contents were not read, decrypted, or hashed. Phase 10 documents CurrentUser DPAPI at-rest protection; it does not protect decrypted plaintext. |
+| Local accidental-copy review | UNKNOWN | Bounded filename-only heuristic scan covered repository and user TEMP text files; some dependency/virtual-environment files were included. It emitted no matched content and did not confirm any credential-value location. Exact-value comparison was not performed; absence across all files cannot be certified. |
+| Cluster / authentication configuration | PASS (read-only files/process) | PostgreSQL 18.6, PID 2452, expected cluster directory/system identifier, process arguments, and postmaster PID file verified. Unprivileged `pg_ctl status` said no server running, contradicted by elevated process/PID/socket evidence (environmental visibility issue). Six active HBA rules all use `scram-sha-256`; zero active `trust` rules. Actual role verifier algorithm was not queried. |
+| Listener diagnostics | PASS (partial) / UNKNOWN (discrepancy) | Elevated `Get-NetTCPConnection` associated `127.0.0.1:55432` with PID 2452 (State blank); `netstat` still returned no row. Prior unprivileged query had no rows. The exact cause remains unknown. No TCP probe or SQL connection this phase. |
+| Port 5432 / existing service | PASS (not accessed) | No port 5432 or service database access, and no service operation. Current service status was not tested. |
+| Recovery actions | BLOCKED / NOT EXECUTED | No credential rotation, reset, DPAPI file change, ACL change, authentication, cluster operation, database operation, backup, migration, or application configuration change. |
+| Tests | NOT TESTED | **0 tests run, 0 failed, 0 skipped.** |
+| `git diff --check` | PASS | Exited 0 for tracked changes; Git emitted its existing README LF-to-CRLF warning. A separate trailing-whitespace scan passed for the three Phase 14A.4 documents, which are in the untracked `docs/` directory. |
+
+See `PHASE_14A4_CREDENTIAL_EXPOSURE_RECOVERY_PLAN.md` for the safe recovery sequence and exact approval gates. Phase 14A operations Aâ€“D remain blocked.
+
+## Phase 14A.5 credential rotation approval plan (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Cluster identity/process | PREFLIGHT PASS | Elevated read-only preflight confirmed PostgreSQL 18.6, PID 2452, exact D: data directory, system ID `7704647215459077108`, and loopback port 55432 from process arguments/PID file. No process control. |
+| Existing DPAPI file | PREFLIGHT PASS (metadata only) | Canonical file exists, owner is current user, inheritance disabled, and only ACE is current-user SID Full Control. Contents were not read/decrypted/hashed. |
+| Role names/rotation method | PREFLIGHT PASS (documented) | Roles are `attendx_cluster_admin` and `attendx_test_role`. Use a supported offline single-user transaction for both; no elevated test-role privileges proposed. No live role/verifier query. |
+| Proposed staging paths | PREFLIGHT PASS | Pending, activation, and retired path candidates were absent. Existing canonical file will not be overwritten during staging. |
+| Application/production scope | PREFLIGHT PASS | `.env` files were not read or changed; no production DB or port 5432 is part of the plan. |
+| Aâ€“F operations | AWAITING APPROVAL | Exact cluster outage, offline password changes, secure random generation, DPAPI staging/roundtrip, activation, and old-file retirement plan documented. None executed. |
+| G authentication | AWAITING SEPARATE APPROVAL | Requires a later explicit approval for new-credential connections only to the isolated loopback cluster. No connection attempted. |
+| Tests / state changes | NOT TESTED / NOT EXECUTED | **0 tests run, 0 failed, 0 skipped.** No credential/ACL/cluster/database changes, backup, restore, migration, or application configuration update. |
+| `git diff --check` | PASS | Exited 0 for tracked changes; Git emitted the existing README LF-to-CRLF warning. Separate trailing-whitespace scan passed for the three Phase 14A.5 docs, which are in untracked `docs/`. |
+
+See `PHASE_14A5_CREDENTIAL_ROTATION_APPROVAL_PLAN.md` for the operation-by-operation connection/shutdown/recovery/reversibility matrix and exact approval request. Phase 14A database operations Aâ€“D remain separately blocked.
+
+## Phase 14A.5A offline rotation execution plan (2026-11-09)
+
+| Check/action | Status | Result |
+|---|---|---|
+| Read-only plan basis | PREFLIGHT PASS (documented) | Used Phase 14A.5 identity: PostgreSQL 18.6, D: cluster path, system ID `7704647215459077108`, and loopback port 55432. No runtime recheck was performed in this planning-only phase; execution plan requires a fresh elevated check before any stop. |
+| A/B offline rotation | AWAITING APPROVAL | Exact roles and one approved single-user transaction are documented. No stop, single-user mode, password change, or privilege change occurred. |
+| C/D secret generation and pending file | AWAITING APPROVAL | Independent in-memory generation and the exact pending DPAPI path are planned. No secret was generated and no file was created or changed. |
+| E DPAPI round trip | AWAITING APPROVAL | Silent in-memory compare is planned. No decrypt/round-trip was performed. |
+| Restart/loopback verification | AWAITING APPROVAL | Plan uses only the exact D: cluster and OS-level PID/socket checks; no startup or network/authentication occurred. |
+| G / canonical activation / retirement | NOT INCLUDED | G requires separate approval. Canonical activation and retirement require another separate approval after G passes. Pending path remains distinct from canonical. |
+| Tests / execution | NOT TESTED / NOT EXECUTED | **0 tests run, 0 failed, 0 skipped.** No database, backup, fixture, migration, credential, cluster, service, ACL, or application configuration operation. |
+| `git diff --check` | PASS | Exited 0 for tracked changes; Git emitted the existing README LF-to-CRLF warning. Separate trailing-whitespace scan passed for the three Phase 14A.5A documents in untracked `docs/`. |
+
+See `PHASE_14A5A_OFFLINE_ROTATION_EXECUTION_PLAN.md` for the exact Aâ€“E command sequence, failure handling, and the later separate G and canonical-file gates.
+
+## Phase 14A.5B independent safety review (2026-11-09 09:55 UTC)
+
+| Review item | Status | Result |
+|---|---|---|
+| Cluster identity / single-user syntax | PASS (documented) | Plan names the exact D: cluster, PostgreSQL 18.6, system ID `7704647215459077108`, loopback 55432, and documented pre-stop PID 2452. PostgreSQL 18 `--single`/`-j` syntax and transaction framing agree with the official manual. No live runtime recheck or database connection. |
+| Pending DPAPI staging ACL | BLOCKED | Pending path is under a parent documented with inherited `Authenticated Users: Modify`; creating an empty file then setting its DACL leaves a race. Atomic restrictive-DACL creation or a reviewed protected staging location is required. |
+| Single-user change success evidence | BLOCKED / UNKNOWN | Output is discarded and the plan treats process exit status as sufficient. The plan does not establish how successful completion of both role changes is distinguished from a SQL error/aborted transaction. Add a secret-safe fail-closed completion check. |
+| Post-restart verification | BLOCKED | Add post-start system-ID verification and clarify that PID 2452 is the pre-stop PID; capture and correlate the new PID after restart. |
+| Shutdown and log path | REVIEW REQUIRED | `-m fast` disconnects active sessions and rolls back in-flight transactions; disclose this in approval. `pg_ctl -l` appends to `server.log`; preflight its existence/ACL. |
+| Approval separation | REVIEW REQUIRED | 14A.5A scopes Aâ€“E, G, and activation/retirement separately, but the older Phase 14A.5 report retains an Aâ€“F request. Explicitly supersede that older request for this gate. Phase 14A database operations Aâ€“D remain separate. |
+| Overall readiness | NOT READY | Do not request Aâ€“E approval until the blockers above are corrected and the revised plan is reviewed. |
+| Tests / execution | NOT RUN | **0 tests run, 0 failed, 0 skipped.** No Aâ€“E operation or other database/credential operation was executed. |
+| `git diff --check` | PASS | Exited 0 for tracked changes; Git emitted its existing README LF-to-CRLF warning. Separate trailing-whitespace scan passed for the two untracked/updated Phase 14A.5B documents. |
+
+See `PHASE_14A5B_INDEPENDENT_SAFETY_REVIEW.md` for exact section references, official PostgreSQL 18 documentation findings, and required corrections.
+
+## Phase 14A.5C â€” Blocker remediation (2026-11-09)
+
+| Item | Status | Result |
+|---|---|---|
+| Documentation corrections | PASS (documented) | Replaced the inherited-parent pending-file path with the existing protected directory path. The plan now requires parent DACL verification before no-overwrite file creation, resulting-file ACL verification before payload write, and post-write ACL verification. It also adds `-m fast` impact disclosure, workload gate, append-log preflight, fresh post-restart PID/system-ID/socket checks, and explicit approval supersession. No live ACL or runtime check was performed. |
+| Offline SQL completion evidence | BLOCKED / UNKNOWN | No reliable, secret-free evidence mechanism is established to prove both role password changes and transaction completion while failing closed. Process exit status is expressly insufficient on its own. No fallback signal was invented; restart must not follow an UNKNOWN result. |
+| Approval state | BLOCKED / NOT REQUESTED | Older Aâ€“F request is withdrawn. Corrected Aâ€“E is not ready for approval. G, canonical DPAPI activation/retirement, and Phase 14A database Aâ€“D remain separate and unapproved. |
+| Tests | NOT RUN | **0 tests run, 0 failed, 0 skipped.** No application or database tests were run. |
+| Credential / database operations | NOT EXECUTED | No credentials, DPAPI contents, PostgreSQL process, database, service, or application configuration were accessed or modified. |
+| `git diff --check` | PASS | Command exited 0. Git reported only the existing `README.md` LF-to-CRLF working-copy warning; no whitespace errors. |
+| Whitespace scan | PASS | Direct trailing-space/tab scan across the five updated documentation files passed after removing two intentional Markdown hard-break spaces. |
+
+See `PHASE_14A5A_OFFLINE_ROTATION_EXECUTION_PLAN.md` and `PHASE_14A5B_INDEPENDENT_SAFETY_REVIEW.md`. The plan remains **NOT READY / BLOCKED** until password-change success evidence is established and independently reviewed.
+## Phase 14A.5D â€” Credential rotation verification design (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Official PostgreSQL 18 research | PASS (documentation review) | Reviewed single-user framing, transaction semantics, transaction ID/status functions, temporary table lifetime, password/logging cautions, and protocol scope. Exact URLs/sections are in `PHASE_14A5D_VERIFICATION_DESIGN.md`. |
+| Commit evidence design | PASS (design; not implemented) | Same `-j` entry contains both role changes and stores its XID in a temporary marker. A second entry queries `pg_xact_status()` and emits a fixed non-secret token only for `committed`. Process exit is not accepted as evidence. |
+| Atomicity / partial execution | PASS (conditional) | Same-entry failure is all-or-nothing; separate entries could partially commit and are prohibited. |
+| Secret-safe output | PASS (design) / NOT TESTED (wrapper) | Proposed memory-only stdout/stderr capture, logging overrides, no `-E`/`-r`, fixed-token recognition, and raw-stream discard. Wrapper needs independent code review; no execution validation occurred. |
+| Credential authentication | NOT TESTED / SEPARATE GATE | Commit marker does not test SCRAM authentication; G remains a separate later approval. |
+| Aâ€“E approval status | NOT APPROVED | Verification design resolves the prior design gap, but this phase makes no approval request. Fresh identity preflight and independent wrapper review precede any new exact request. |
+| Tests / operations | NOT RUN | **0 tests run, 0 failed, 0 skipped.** No PostgreSQL or credential operation occurred. |
+| `git diff --check` | PASS | Command exited 0. Git reported only the existing `README.md` LF-to-CRLF working-copy warning; no whitespace errors. |
+| Whitespace scan | PASS | Direct trailing-space/tab scan passed across all six updated documentation files. |
+
+See `PHASE_14A5D_VERIFICATION_DESIGN.md`. No credentials/DPAPI contents or PostgreSQL/database/service state were accessed.
+
+## Phase 14A.5E â€” Mock-only wrapper implementation (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Wrapper implementation | PASS (mock boundary) | Added `backend/scripts/phase14a5e_rotation_wrapper.py`. It builds in-memory transaction/status-query entries, delegates once to an injected executor, suppresses raw output/exceptions, and returns only fixed statuses. No subprocess or PostgreSQL adapter is included. |
+| Mocked safety tests | PASS | Focused `unittest` suite: **14 passed, 0 failed, 0 skipped**. Tests cover success marker, first/second simulated role failure, rollback, missing/malformed/duplicate markers, abnormal exit/timeout, simulated secrets in stdout/stderr/exceptions, unexpected output, invalid input, one-shot behavior, and blocked external I/O. |
+| Real PostgreSQL output compatibility | UNKNOWN / NOT TESTED | The verifier accepts only stdout equal to the token plus optional newline and empty stderr. PostgreSQL 18 documents developer-oriented output, not this exact envelope. No real executor/output adapter or PostgreSQL operation was run. |
+| Independent safety review | UNKNOWN / NOT INDEPENDENT | Findings are documented, but the review was performed by the implementing agent; separate independent assurance was not available. |
+| Credential / cluster / database operations | NOT EXECUTED | No credentials or DPAPI files were accessed; no PostgreSQL process, database, port, service, or application configuration was accessed or changed. Aâ€“E, G, canonical-file activation/retirement, and Phase 14A operations Aâ€“D remain unapproved. |
+| Python syntax checks | PASS | `python -B` AST parsing of the wrapper and focused test module passed. |
+| `git diff --check` | PASS | Command exited 0. Git emitted the existing `README.md` LF-to-CRLF working-copy warning; no whitespace errors. |
+| Whitespace scan | PASS | Direct trailing-space/tab scan passed across the nine scoped implementation, test, and report files after removing date-line trailing spaces. |
+
+See `PHASE_14A5E_WRAPPER_IMPLEMENTATION.md` and `PHASE_14A5E_INDEPENDENT_REVIEW.md`. Mock tests establish verifier behavior only; they do not validate PostgreSQL output or credential rotation.
+
+## Phase 14A.5F â€” Adversarial wrapper review (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Focused mock suite | PASS (mock only) | `..\.venv\Scripts\python.exe -m unittest discover -s tests -p test_phase14a5e_rotation_wrapper.py -v` â€” **14 passed, 0 failed, 0 skipped**. Synthetic inputs only. |
+| Adversarial review | FAIL | A synthetic in-memory executor that did no work and returned constant `COMMIT_TOKEN` produced `ROTATION_COMMIT_VERIFIED`. The constant is also replayable; no invocation binding or stale-marker rejection exists. Details and line references are in `PHASE_14A5F_INDEPENDENT_ADVERSARIAL_REVIEW.md`. |
+| External I/O and secret containment | PASS WITH LIMITS | The wrapper source has no process, socket, filesystem, logging, or environment adapter; tests patch common Python I/O surfaces while using only a fake executor. This does not constrain a future executor or prove all possible native I/O paths. |
+| PostgreSQL compatibility | NOT TESTED | No PostgreSQL process or SQL was run. Actual single-user output, transaction behavior, and marker protocol remain unverified. |
+| Rotation readiness | BLOCKED | Do not use wrapper success as rotation evidence. Aâ€“E remain NOT READY / NOT APPROVED. G, DPAPI activation/retirement, and Phase 14A database Aâ€“D were not performed. |
+| Reviewer independence | UNKNOWN | Separate adversarial pass, but same assistant session as the prior implementation; it is not organizationally independent assurance. |
+| PostgreSQL / credentials / DPAPI operations | NOT RUN | None were accessed or performed. |
+
+## Phase 14A.5G â€” Verification architecture redesign (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Architecture decision | PASS (documentation) | Recommend **REPLACE** the injected-executor wrapper for operational use; retain only as historical mock verifier. No code was changed. |
+| Evidence provenance and replay | BLOCKED | Fixed token is forgeable by a no-op executor and replayable. Future design requires a trusted launch/capture boundary plus invocation-bound evidence; PostgreSQL 18 stable machine-readable single-user output is not established. |
+| Tests | NOT RUN | Per scope, no wrapper or credential-related tests were run. |
+| PostgreSQL / credential / DPAPI operations | NOT RUN | No process, SQL, port, service, database, credential, or DPAPI operation occurred. |
+| Rotation readiness | BLOCKED / NOT APPROVED | Aâ€“E remain blocked. G, canonical DPAPI activation/retirement, and Phase 14A database Aâ€“D remain separate and unapproved. |
+| Documentation hygiene | PASS | `git diff --check` exited 0; trailing-whitespace scan passed across the six changed documentation files. Git emitted the existing README LF-to-CRLF warning. |
+
+See `PHASE_14A5G_VERIFICATION_ARCHITECTURE.md`. Official PostgreSQL 18 documentation reviewed for single-user mode/framing, transaction status, password statements and logging; links are listed in that design document.
+
+## Phase 14A.5H â€” Alternative verification research (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| PostgreSQL 18 documentation research | PASS (research only) | Reviewed official docs for `psql \\password`, `psql -1`/`-c`, `ALTER ROLE`, `COMMIT`, `pg_current_xact_id`/`pg_xact_status`, single-user mode, and prepared transactions. Citations/limitations are in `PHASE_14A5H_ALTERNATIVE_VERIFICATION_RESEARCH.md`. |
+| Research conclusion | INCONCLUSIVE | Authenticated-client transaction/status method is a conditional candidate, but a valid uncompromised cluster-admin credential and follow-up authenticated session are not established. Exact secure two-role prompt/transaction flow remains unvalidated. |
+| Tests | NOT RUN | No tests or wrapper execution were run. |
+| PostgreSQL / credentials / DPAPI operations | NOT RUN | No PostgreSQL process, connection, SQL, port, service, credential, or DPAPI operation occurred. |
+| Rotation readiness | BLOCKED / NOT APPROVED | Aâ€“E remain blocked; no approval request was made. |
+| Documentation hygiene | PASS | `git diff --check` exited 0; trailing-whitespace scan passed on the six changed documentation files. Git emitted the existing README LF-to-CRLF warning. |
+
+## Phase 14A.5I â€” Administrator access recovery planning (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Recovery option research | PASS (documentation only) | Compared verified admin credential, controlled offline recovery, and isolated-cluster reinitialization using official PostgreSQL 18 and Microsoft DPAPI documentation. |
+| Decision | DESIGN CONTROLLED OFFLINE RECOVERY | Conditional planning direction only. No uncompromised admin credential is established. Offline secret delivery remains an unresolved blocker; post-reset SCRAM checks of both roles are proposed as separate G verification. |
+| Tests | NOT RUN | No tests were run. |
+| PostgreSQL / credential / DPAPI operations | NOT RUN | No process, connection, SQL, service, port, credential, or DPAPI file was accessed or operated. |
+| Rotation readiness | BLOCKED / NOT APPROVED | Aâ€“E remain blocked. No recovery option was executed or approved. |
+| Documentation hygiene | PASS | `git diff --check` exited 0; trailing-whitespace scan passed on the five changed documentation files. Git emitted the existing README LF-to-CRLF warning. |
+
+## Phase 14A.5J â€” Offline secret-delivery design (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Delivery mechanism assessment | INCONCLUSIVE | Stdin/anonymous pipe avoids argv/env/plaintext-file placement but does not resolve memory, inherited-handle, diagnostics/log, or crash-dump exposure. SCRAM verifier delivery is a candidate only; verifier is itself sensitive and exact generation/diagnostic safety are unvalidated. |
+| Prototype/code | NOT CREATED | No defensible complete mechanism established under the requested threat model; no unsafe prototype added. Reviewer checklist is included in the design report. |
+| Tests / Python execution | NOT RUN | No tests or Python syntax execution were run. |
+| PostgreSQL / credential / DPAPI operations | NOT RUN | No process, SQL, connection, service, port, credential generation, or DPAPI file operation occurred. |
+| Rotation readiness | BLOCKED / NOT APPROVED | Aâ€“E remain blocked. No recovery or authentication approval requested. |
+| Documentation hygiene | PASS | `git diff --check` exited 0; trailing-whitespace scan passed on the six changed documentation files. Git emitted the existing README LF-to-CRLF warning. |
+
+## Phase 14A.6 - Tenant migration static hardening (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend tests | PASS (database-independent) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` - **37 passed, 0 failed, 0 skipped**. Breakdown: tenant API pilot 12, tenant foundation/membership 12, migration static contract 7, fixture 6. SQLite and static assertions only; not PostgreSQL validation. Existing Starlette/httpx deprecation warning did not fail the run. |
+| Fixture freshness / draft FK check | PASS (offline) | `..\.venv\Scripts\python.exe scripts\generate_tenant_user_schema_fixture.py --check` - fixture matches offline SQLAlchemy PostgreSQL dialect output; four integer `public.users(id)` references pass generator checks. No database connection. |
+| Python syntax | PASS | AST parsing with `-B` passed for `app/models.py`, fixture generator, foundation tests, and migration static tests (4 files). |
+| `git diff --check` | PASS | Exit 0. Git emitted the existing README LF-to-CRLF working-copy warning. |
+| Trailing-whitespace scan | PASS | Six scoped code/test/migration/readiness-report files scanned; zero trailing spaces or tabs after correction. |
+| Frontend tests | NOT RUN | No tenant frontend files were changed. |
+| PostgreSQL parser/server/migration/rollback | NOT TESTED | No PostgreSQL access, SQL execution, or database operation. SQLite/static checks do not prove PostgreSQL compatibility. |
+| Route authorization audit | PASS (static inventory; limited coverage) | The two `/tenant/pilot/college-profile` routes use active membership context and college-scoped targets; other mounted business routers do not currently enforce College membership/context. See Phase 14A.6 readiness route table. |
+| Credential / cluster / database operations | NOT RUN | No credentials, DPAPI, PostgreSQL process/service/port, database, or application configuration was accessed or operated. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A6_TENANT_MIGRATION_STATIC_READINESS.md`. The draft remains DRAFT / NOT APPLIED pending approved PostgreSQL rehearsal and full legacy-schema compatibility evidence.
+## Phase 14A.7 - Legacy API tenant isolation (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend suite | PASS (synthetic SQLite / local FastAPI test app) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` - **40 passed, 0 failed, 0 skipped**. Breakdown: tenant API/pilot and legacy gate 15, foundation/membership 12, migration static contracts 7, fixture 6. Existing Starlette/httpx deprecation warning did not fail tests. |
+| Fail-closed behavior | PASS (limited protection) | Representative authenticated legacy GETs across business router groups and POST/PUT/DELETE writes returned sanitized 503 before handlers; unauthenticated legacy request returned 401. Route-gate test does not execute legacy data handlers and does not prove tenant query filtering. |
+| Tenant profile pilot | PASS (pilot only) | Existing behavioral tests still exercise active membership resolution, cross-College read/write denial, membership roles and Super Admin separation. |
+| Frontend tests | NOT RUN | No frontend files changed. Existing frontend services call now-blocked business APIs; see Phase 14A.7 compatibility report. |
+| Python syntax | PASS | AST checks with `-B` passed for changed backend Python files. |
+| `git diff --check` / whitespace | PASS | Exit 0; scoped trailing-whitespace scan passed. Git emitted existing README LF-to-CRLF warning. |
+| PostgreSQL / migration | NOT TESTED | No PostgreSQL, database or SQL operation. Tenant business schema/ownership is still absent/unverified. |
+| Full route tenant isolation | BLOCKED | Legacy business handlers remain disabled. They do not yet perform College-scoped reads/writes. Resume only after reviewed ownership schema and per-route query/parent-child enforcement exist and have tests. |
+| Credentials / cluster / service | NOT RUN | No credentials, DPAPI, PostgreSQL process/service/cluster/port, or application database configuration was accessed or operated. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A7_LEGACY_API_TENANT_ISOLATION.md` for the complete route/method inventory, existing handler policy, gate status and frontend impact. The 503 gate is a protective interim block, not completion of tenant-aware business APIs.
+**Phase 14A.7 test iteration note:** Two intermediate focused runs failed on test setup assumptions (wrong sample route paths and an eager-route-introspection assumption): 14 run / 4 assertion failures, then 13 run / 1 assertion failure. The test assumptions were corrected; the final full focused tenant run passed 40/40. No failure involved a PostgreSQL or database operation.
+## Phase 14A.8 - College ownership schema foundation (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend tests | PASS (synthetic SQLite / local FastAPI / static SQL) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` - **52 passed, 0 failed, 0 skipped**. Breakdown: API/pilot/gate 15, membership foundation 12, Phase 14A.6 migration contracts 7, ownership behavior 8, ownership migration contracts 4, schema fixture 6. SQLite tests enable foreign-key enforcement. |
+| Fixture generator check | PASS (offline only) | `..\.venv\Scripts\python.exe scripts\generate_tenant_user_schema_fixture.py --check` - same zero-row public.users fixture and four qualified integer FKs; no database connection. |
+| Python syntax | PASS | AST checks with `-B` parsed 8 files: `app/main.py`, `app/models.py`, `app/tenant_api_gate.py`, `app/tenant_ownership.py`, `app/services/attendance_core.py`, tenant API tests, ownership tests and ownership migration static tests. |
+| `git diff --check` / whitespace | PASS | Final checks exited 0; scoped trailing-whitespace scan passed. Git emitted the existing README LF-to-CRLF working-copy warning. |
+| Migration execution / PostgreSQL validation | NOT TESTED | New ownership draft is static only. No PostgreSQL parser/server, migration, rollback, lock or catalog check was run. SQLite/static checks are not PostgreSQL compatibility evidence. |
+| Legacy business route availability | BLOCKED (intentionally fail-closed) | Phase 14A.7 authenticated 503 gate remains active across legacy business routers. No tenant business handler has been newly exposed or falsely labeled tenant-safe. |
+| Credential / DPAPI / cluster / service / database | NOT RUN | No credentials, DPAPI, PostgreSQL process/service/cluster/port, database, migration or application DB configuration was accessed or operated. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+**Test iteration note:** An initial isolated ownership test invocation ran 7 tests and had 4 assertion failures because a column's FK set also contains composite parent references; the test was corrected to assert the College FK among all targets. The initial assertion was corrected; final ownership coverage is 8 tests within the complete tenant-focused suite, which passed 52/52.
+
+See `PHASE_14A8_COLLEGE_OWNERSHIP_SCHEMA.md`. The new PostgreSQL ownership migration is DRAFT / NOT APPLIED.
+## Phase 14A.9 - Read-only tenant-scoped Subjects API (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend suite | PASS (SQLite / in-process FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` - **62 passed, 0 failed, 0 skipped**. Breakdown: API pilot/gate 15, membership foundation 12, Phase 14A.6 migration contracts 7, ownership behavior 8, ownership migration contracts 4, Subject API 10, fixture 6. Existing Starlette/httpx deprecation warning did not fail tests. |
+| Subjects list/detail | PASS (synthetic SQLite only) | `GET /subjects/` and `GET /subjects/{subject_id}` require active membership/College context and return only matching non-NULL Subject ownership. List order is `id ASC`; foreign, unassigned and absent IDs all return the same 404. Caller `college_id` cannot change context. |
+| Subject write routes | BLOCKED (expected) | `POST /subjects/`, `PUT /subjects/{subject_id}`, `DELETE /subjects/{subject_id}` fall through to the Phase 14A.7 legacy gate and return sanitized 503. |
+| Other legacy business routes | BLOCKED (default deny) | Existing router-level gate remains in place; Subject read routes are the only new exception. Existing representative-router gate tests pass. |
+| Missing schema | PASS (fail closed, SQLite) | Missing CollegeMembership table, Subject table, or Subject `college_id` column returns sanitized 503; no global fallback. |
+| Parent relationship integrity | PASS (SQLite metadata only) | Subject has no direct Class join in these read routes; TeacherAssignment links Subject/Class. Synthetic SQLite composite FK tests reject cross-College Subject or Class assignments. Not PostgreSQL validation. |
+| Python syntax | PASS | AST checks with `-B` passed for 5 changed Python files. |
+| `git diff --check` | PASS | Exit 0; Git emitted the existing README LF-to-CRLF working-copy warning. |
+| Frontend tests | NOT RUN | No frontend files changed. Existing frontend Subject readers now receive tenant-filtered data; legacy write callers remain blocked. |
+| PostgreSQL / credential operations | NOT RUN | No PostgreSQL, database, credential, DPAPI, service, cluster or port operation occurred. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A9_SUBJECTS_TENANT_API.md`. Phase 14A.8 ownership migration remains DRAFT / NOT APPLIED; this test evidence does not establish PostgreSQL compatibility.
+
+## Phase 14A.10 - Explicit College membership selection and Subjects frontend (2026-11-09)
+
+| Check | Status | Result |
+|---|---|---|
+| Backend tenant suite | PASS (synthetic SQLite / FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` â€” **67 passed, 0 failed, 0 skipped**. Includes five new membership discovery tests and updated Subject selector behavior. Existing Starlette/httpx deprecation warning did not fail the suite. |
+| Frontend tests | PASS (serial Node test files) | From `frontend`, each file was run directly with Node in sorted order: `Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { & node $_.FullName }`. **37 passed, 0 failed, 0 skipped** across eight files, including nine Phase 14A.10 tests. |
+| Node test-worker invocation | ENVIRONMENTAL FAILURE; serial retry PASS | `node --test tests/*.test.mjs` returned `spawn EPERM` for all eight test files before assertions ran (0 assertions, 8 runner failures). Direct serial Node invocation of every file then passed all 37 assertions; no assertion failure was observed. |
+| Membership discovery behavior | PASS (synthetic SQLite) | `GET /tenant/memberships` lists only the authenticated caller's active memberships for active Colleges and returns only `college_id`, `college_name`, and `membership_role`; no-membership global Admin receives an empty list, Super Admin receives 403, unauthenticated receives 401, missing membership schema receives sanitized 503. |
+| Subject selection and isolation | PASS (synthetic SQLite) | `college_id` query selector is now declared for both Subject GET routes and revalidated through the existing tenant resolver on every request. A verified selection resolves that College; multi-membership with no selector returns 409; foreign selection returns 403; Subject GET filters remain tenant-scoped. |
+| Frontend selection | PASS (selection helper tests / code integration) | Backend-confirmed singleton may be preselected; multi-membership requires a valid saved choice or explicit selection; stale stored IDs are cleared; switches change the keyed workspace subtree and reload it. Empty/error state withholds workspace routes until selection is confirmed. |
+| Subject write availability | PASS (UI/client review; backend gate tests) | Admin Subjects page is read-only. Subject create/update/delete client methods were removed; backend Subject write routes continue returning the Phase 14A.7 sanitized 503 gate response. |
+| Python syntax | PASS | Python AST checks performed without writing bytecode for all changed backend Python files (exact command recorded in Phase 14A.10 report). |
+| `git diff --check` and whitespace | PASS | `git diff --check` exit 0. Scoped trailing-whitespace scan of 18 Phase 14A.10 changed files passed. Git reported LF-to-CRLF working-copy warnings for `README.md`, `frontend/src/index.css`, and `AcademicManagement.jsx`; no whitespace error was reported. |
+| PostgreSQL / migration / credential operations | NOT RUN | No PostgreSQL, port, database, migration, credential, DPAPI, service, cluster, ACL or application connection setting was accessed or operated. SQLite evidence is not PostgreSQL validation. Credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A10_COLLEGE_SELECTION.md` for the exact endpoint and `college_id` query contract, route-by-route status and remaining limitations. Tenant ownership migration remains DRAFT / NOT APPLIED; all other legacy business routes and Subject writes remain behind the default-deny gate.
+
+## Phase 14A.11 - Tenant selection end-to-end verification and hardening (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Backend tenant-focused tests | PASS (synthetic SQLite / FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` â€” **68 passed, 0 failed, 0 skipped**. Starlette/httpx deprecation warning was non-fatal. |
+| Frontend serial tests | PASS (Node / mocked Axios) | From `frontend`, sorted serial loop `Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { & node $_.FullName }` â€” **43 passed, 0 failed, 0 skipped** across eight test files. New service tests assert actual Subjects list/detail GET configuration with explicit selection and prove missing selection fails before adapter dispatch. |
+| Frontend production build | PASS | `npm run build` from `frontend`, Vite 7.3.7; 1,935 modules transformed. Package `use client` directive and large chunk warnings remain. The first restricted attempt ended before transform with Windows `spawn EPERM`; reviewed retry succeeded. An intermediate real bundle compile caught a duplicate helper name, fixed before the final successful build. |
+| Browser UI verification | NOT TESTED | No Playwright, Puppeteer, jsdom, Testing Library, or other browser harness was present in the frontend package lock. No dependency was installed. Tests do not claim rendered/dropdown/banner interaction. |
+| Python syntax | PASS | `..\.venv\Scripts\python.exe -B -c "import ast, pathlib; files=['app/main.py','app/api/tenant_subjects.py','app/api/tenant_memberships.py','app/schemas/tenant_membership.py','tests/test_tenant_subjects_api_isolated.py','tests/test_tenant_membership_selection_isolated.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in files]; print('AST syntax PASS:', len(files), 'files')"` â€” 6 files parsed, no bytecode written. |
+| `git diff --check` | PASS | Exit 0. Git emitted existing LF-to-CRLF working-copy warnings for README and modified frontend text files. |
+| Trailing-whitespace scan | PASS | Scoped scan of Phase 14A.11 changed code/test/report files found no trailing whitespace. |
+| Exact enabled tenant endpoint set | PASS (route/code inspection) | `GET /tenant/memberships`, `GET /subjects/`, `GET /subjects/{subject_id}`, and existing `GET`/`PATCH /tenant/pilot/college-profile`. No other tenant-aware business endpoint was added. Subject POST/PUT/DELETE and all other legacy business APIs remain behind the 14A.7 503 gate. |
+| PostgreSQL / database / credential operations | NOT RUN | No PostgreSQL, database, port, migration, credential, DPAPI, service, cluster, ACL or application connection setting was accessed or operated. SQLite tests do not prove PostgreSQL compatibility. Credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A11_END_TO_END_VERIFICATION.md`. Existing ownership migration and all non-Subject business APIs remain blocked/unverified as documented.
+
+**Iteration note:** Intermediate runs exposed and resolved a backend sanitized-503 wording mismatch in Subject detail tests, frontend Node import compatibility, a duplicate helper declaration, and stale frontend source-contract assertions. These were corrected before the final successful suites/build. The earlier Node worker `spawn EPERM` was environmental and distinct from assertion failures.
+
+## Phase 14A.12 - Read-only tenant-scoped Classes API (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend suite | PASS (synthetic SQLite / FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` â€” **78 passed, 0 failed, 0 skipped**. Non-fatal Starlette/httpx deprecation warning. Includes 10 Class API tests. |
+| Frontend tests, serial | PASS (Node / mocked Axios) | From `frontend`, sorted serial loop `Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { & node $_.FullName }` â€” **47 passed, 0 failed, 0 skipped** across nine test files. Four new Class tests cover service request methods/paths and explicit College IDs, pre-dispatch rejection without selection, status messages, stale-state handling and unavailable write calls. |
+| Frontend production build | PASS | `npm run build` from `frontend`, Vite 7.3.7; 1,935 modules transformed. Non-fatal package `use client` and >500 kB minified chunk warnings remain. |
+| Python syntax | PASS | `..\.venv\Scripts\python.exe -B -c "import ast, pathlib; files=['app/main.py','app/api/tenant_classes.py','tests/test_tenant_classes_api_isolated.py','tests/test_tenant_api_pilot_isolated.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in files]; print('AST syntax PASS:', ', '.join(files))"` â€” four files parsed, no bytecode written. |
+| `git diff --check` | PASS | Final exit 0. Existing line-ending warnings from Git are not whitespace errors. |
+| Trailing-whitespace scan | FAIL (pre-existing file whitespace) | Scoped scan found **3,665** trailing-whitespace lines in the pre-existing, 4,105-line `frontend/src/pages/auth/admin/Students.jsx`; the Phase 14A.12 changes to that file add none. One trailing Markdown line in the new report was removed; the other scoped files are clean. Existing whitespace was preserved rather than rewriting the large user-modified file. |
+| Exact enabled tenant endpoint set | PASS (route/code inspection) | `GET /tenant/memberships`; `GET /subjects/`; `GET /subjects/{subject_id}`; `GET /classes/`; `GET /classes/{class_id}`; existing `GET /tenant/pilot/college-profile`; existing `PATCH /tenant/pilot/college-profile`. No other legacy business API was enabled. Subject and Class writes remain behind the 14A.7 gate. |
+| PostgreSQL / database / credential operations | NOT RUN | No PostgreSQL, database, port, migration, credential, DPAPI, service, cluster, ACL or application connection setting was accessed or operated. SQLite does not prove PostgreSQL compatibility; tenant ownership migration remains DRAFT / NOT APPLIED. Credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A12_CLASSES_TENANT_API.md` for Class ownership assessment, selector contract, route status, limitations and same-College relationship test scope.
+
+## Phase 14A.13 - Read-only tenant-scoped Teachers API (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Backend tenant-focused suite | PASS (synthetic SQLite / local FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` â€” **88 passed, 0 failed, 0 skipped**. Includes tenant Teacher behavior tests. Starlette emitted a non-fatal httpx deprecation warning. |
+| Frontend serial suite | PASS | From `frontend`, sorted serial loop invoking `node <file>` â€” **10 files, 51 passed, 0 failed, 0 skipped**. New Teacher service tests use a mocked Axios adapter; page integration and absence of write controls also have source assertions. |
+| Vite production build | PASS | `npm run build` â€” Vite 7.3.7, 1,935 modules transformed. Initial restricted attempt failed before transform with environmental `spawn EPERM`; retry in elevated context passed. Warnings: ignored package `use client` directives and minified chunk >500 kB. |
+| Python syntax | PASS | Python AST parsed changed files `app/main.py`, `app/api/tenant_teachers.py`, `app/schemas/tenant_teacher.py`, `tests/test_tenant_teachers_api_isolated.py`, and `tests/test_tenant_api_pilot_isolated.py`; no bytecode generated. |
+| `git diff --check` | PASS | No whitespace errors in diff. |
+| Scoped trailing-whitespace scan | PASS | Phase 14A.13 source, test, and documentation files are clean. Historical whitespace in `Students.jsx` was not rewritten. |
+| Browser UI / PostgreSQL validation | NOT TESTED | No browser rendering was performed. Tests use synthetic SQLite and mocked HTTP; ownership migration remains DRAFT / NOT APPLIED. |
+| Enabled tenant routes | PASS (code/test scoped) | `GET /tenant/memberships`; `GET /subjects/`; `GET /subjects/{subject_id}`; `GET /classes/`; `GET /classes/{class_id}`; `GET /teachers/`; `GET /teachers/{teacher_id}`; existing `GET /tenant/pilot/college-profile`; existing `PATCH /tenant/pilot/college-profile`. Teacher writes and other unreviewed legacy business APIs remain default-denied. |
+| Credential / DPAPI / database / service / cluster / port operations | NOT RUN | No database, PostgreSQL, credential, DPAPI, Windows service, cluster, ACL, port, or application database-configuration operation occurred. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A13_TEACHERS_TENANT_API.md`. Teacher NULL ownership remains UNKNOWN; the response omits email and employee ID, and no User join/email matching is used. Synthetic SQLite does not establish PostgreSQL compatibility or deployed schema availability.
+
+**Phase 14A.13 test iteration note:** The first tenant-suite run had 3 assertion failures in the newly written tests: the foreign-selector case used a user who legitimately had membership in that selected College, and two missing-schema cases omitted a selector for a multi-membership user (correct 409). The test setup was corrected to use a non-member for the foreign selector and explicit selection for missing-schema checks; unauthenticated Teacher coverage was added. Final result: **88/88 passed**. No implementation authorization bypass was found in those iterations.
+
+## Phase 14A.13A - Teachers regression audit (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Complete before/after page and service audit | PASS | Compared working-tree diffs with `HEAD`, inventoried previous page sections/functions and all old service exports, and searched all frontend callers. Dashboard route/link/sidebar entry remain. No broken references to removed Teacher write/assignment exports found. |
+| Read-only feature preservation | PASS | Restored tenant-filtered stats, name/department/record-ID search, status/department filters, reset filters, refresh, responsive table, loading/empty/error states, and sanitized detail dialog using the existing `Teachers.css`. |
+| Unsafe/unavailable functionality | PASS (intentionally removed) | Teacher CRUD, password/account forms, activation, assignment reads/writes, email/employee-ID display and clipboard action remain absent. Assignment route stays gated; no global User role or localStorage authorization used. |
+| Focused frontend test | PASS | `node tests/tenant-teachers.test.mjs` â€” **4 passed, 0 failed, 0 skipped**. |
+| Full frontend serial tests | PASS | Sorted sequential run of all `tests/*.test.mjs` â€” **10 files, 51 passed, 0 failed, 0 skipped**. |
+| Production build | PASS | `npm run build`; initial restricted run failed before transform with environmental `spawn EPERM`; elevated retry succeeded (1,935 modules). Non-fatal `use client` and large-chunk warnings remain. |
+| Browser verification | NOT TESTED | No browser was launched; layout/rendering/responsive behavior was not visually exercised. |
+| Backend/PostgreSQL | NOT RUN | No backend suite rerun for this frontend audit; no PostgreSQL/database/credential operation occurred. |
+
+See `PHASE_14A13A_TEACHERS_REGRESSION_AUDIT.md` for the before/after feature matrix and details. No other feature phase was started.
+
+## Phase 14A.14 - Students read-only tenant API (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Backend tenant-focused suite | PASS (synthetic SQLite / local FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_*" -v` â€” **98 passed, 0 failed, 0 skipped**. Starlette emitted a non-fatal httpx deprecation warning. |
+| Frontend serial suite | PASS | From `frontend`, sorted sequential execution of all `tests/*.test.mjs` â€” **11 files, 56 passed, 0 failed, 0 skipped**. Student service behavior uses mocked Axios; route/UI feature assertions are source-based, not browser rendering. |
+| Vite production build | PASS | `npm run build`; initial restricted execution failed before transformation with environmental `spawn EPERM`; elevated retry passed, Vite 7.3.7, 1,935 modules transformed. Non-fatal `use client` and >500 kB chunk warnings remain. |
+| Python syntax | PASS | AST parsed 7 changed backend Python files with `-B`; no bytecode written. |
+| `git diff --check` / scoped trailing whitespace | PASS | No diff whitespace errors; changed Phase 14A.14 files are clean. The large legacy `Students.jsx` was preserved without mass whitespace rewriting. |
+| Browser UI / PostgreSQL | NOT TESTED | No browser rendering. No PostgreSQL validation; tenant ownership migration remains DRAFT / NOT APPLIED. |
+| Enabled tenant endpoint set | PASS (route/code/test scoped) | `GET /tenant/memberships`; `GET /subjects/`; `GET /subjects/{subject_id}`; `GET /classes/`; `GET /classes/{class_id}`; `GET /teachers/`; `GET /teachers/{teacher_id}`; `GET /students/`; `GET /students/{student_id}`; existing `GET /tenant/pilot/college-profile`; existing `PATCH /tenant/pilot/college-profile`. All other legacy business routes, Student nested routes, and writes remain default-denied. |
+| Credential / database / service / cluster / ACL / port operations | NOT RUN | No database, PostgreSQL, credential, DPAPI, Windows service, cluster, ACL, or port operation occurred. Credential rotation A-E remains BLOCKED / NOT APPROVED; Phase 14A.15 was not started. |
+
+Student ownership is explicit in current ORM metadata but deployed schema is unknown because the ownership migration is DRAFT / NOT APPLIED. NULL ownership remains UNKNOWN. The new response includes only Student-profile directory fields and does not join User, face, guardian, enrollment, or assignment records. See `PHASE_14A14_STUDENTS_TENANT_API.md`.
+
+**Phase 14A.14 iteration note:** The first backend suite had three test expectation mismatches: older route-gate tests probed Students/Teachers endpoints that now have tenant handlers, and the new test used `/teachers/` as an unreviewed route although it was already enabled. Probes were changed to still-blocked `/assignments/`. The focused Student API suite then passed **10/10**, and the final complete tenant suite passed **98/98**. These were test expectation corrections; the final run had no assertion failures.
+A focused backend invocation using `-m unittest test_tenant_students_api_isolated...` initially failed to import because `tests` is not a Python package; this was a command/module-discovery issue, not an assertion failure. The corrected discovery command `..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_tenant_students_api_isolated.py" -v` passed **10/10**. The first full tenant discovery run then had three assertion failures from stale/unreviewed-route test probes; those probes were corrected to use `/assignments/`, and the final full run passed **98/98**.
+
+## Phase 14A.15 - Read-only tenant attendance API (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant-focused backend suite | PASS (synthetic SQLite / in-process FastAPI / static) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_*' -v` - **106 passed, 0 failed, 0 skipped**. Includes 8 new attendance behavior tests. Non-fatal Starlette TestClient deprecation warning recommends `httpx2`; no dependency was installed. |
+| Attendance / gate focused backend suites | PASS | `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_attendance_api_isolated.py' -v` - **8 passed**; `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_api_pilot_isolated.py' -v` - **15 passed**. |
+| Frontend serial tests | PASS | From `frontend`: `$failed = 0; $total = 0; Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { $total++; Write-Output "=== $($_.Name) ==="; & node $_.FullName; if ($LASTEXITCODE -ne 0) { $failed++ } }; Write-Output "SERIAL_TOTAL_FILES=$total FAILING_FILES=$failed"; if ($failed -gt 0) { exit 1 }` - **12 files, 61 passed, 0 failed, 0 skipped**. Axios requests were mocked. Source assertions are not browser tests. |
+| Vite production build | PASS (retry) | `npm run build` from `frontend`; Vite 7.3.7 transformed **1,937 modules**. Initial restricted attempt failed before transform with Windows `spawn EPERM`; retry outside the restricted sandbox passed. Non-fatal ignored `use client` and >500 kB chunk warnings remain. |
+| Python syntax | PASS | From `backend`: `..\.venv\Scripts\python.exe -B -c "import ast,pathlib; files=['app/main.py','app/api/tenant_attendance.py','app/schemas/tenant_attendance.py','tests/test_tenant_attendance_api_isolated.py','tests/test_tenant_api_pilot_isolated.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in files]; print('AST syntax PASS:', len(files), 'files')"` - 5 files parsed without bytecode output. |
+| `git diff --check` / whitespace | PASS | `git diff --check` returned 0. Scoped trailing-whitespace scan of Phase 14A.15 changed code/tests/reports passed; historical whitespace in pre-existing modified `Students.jsx` was preserved. |
+| Browser / PostgreSQL / migration | NOT TESTED | No browser rendered the page. No PostgreSQL connection or migration occurred. Ownership migration remains DRAFT / NOT APPLIED; SQLite tests do not prove deployed schema or PostgreSQL behavior. |
+| Enabled tenant attendance endpoints | PASS (code/tests) | `GET /attendance/`, `GET /attendance/{attendance_id}`, `GET /attendance-records/`, `GET /attendance-records/{record_id}` only. Writes, session lifecycle/reads, QR, live attendance, face attendance, nested, and all unreviewed legacy routes remain default-denied. |
+| PostgreSQL / credential safety | NOT RUN | No PostgreSQL, database, credential, DPAPI, service, cluster, ACL, port, migration, or application connection setting was accessed or operated. Credential rotation A-E remains BLOCKED / NOT APPROVED. |
+
+See `PHASE_14A15_ATTENDANCE_TENANT_API.md`. AttendanceRecord reads require same-College TeacherAssignment and StudentClassAssignment evidence. NULL ownership remains UNKNOWN; no ownership backfill or role promotion occurred. No production readiness is claimed.
+
+**Phase 14A.15 test iteration note:** The first complete tenant run had four assertion failures: two existing route-gate tests still expected the now-enabled attendance GET roots to be blocked, while two new expectations used a nonexistent nested attendance route and treated a nonexistent login as a 403 membership case. Those probes were corrected to actual blocked routes and appropriate 401/403 semantics. The final run was **106/106 passing**. Initial attempts with system Python and backend-local virtual environments could not load the Starlette TestClient (missing FastAPI in system Python; unavailable `httpx2` for those local environments). The repository-root `.venv` completed the run; no dependencies were installed.
+
+## Phase 14A.16 - Tenant Admin Dashboard and Analytics Read-only (2026-11-10)
+
+| Check | Status | Result |
+|---|---|---|
+| Tenant dashboard backend suite | PASS (synthetic SQLite / in-process FastAPI) | From `backend`: `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_*' -v` - **114 passed, 0 failed, 0 skipped**. Includes 8 dashboard tests. Starlette TestClient deprecation warning was non-fatal; no package was installed. |
+| Focused dashboard backend tests | PASS | `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_dashboard_isolated.py' -v` - **8 passed, 0 failed, 0 skipped**. |
+| Frontend serial tests | PASS | From `frontend`: `$failed = 0; $files = 0; $passed = 0; $skipped = 0; Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { $files++; $output = & node $_.FullName 2>&1; $exit = $LASTEXITCODE; $passLine = $output | Select-String 'pass \d+' | Select-Object -Last 1; $skipLine = $output | Select-String 'skipped \d+' | Select-Object -Last 1; if ($passLine) { $passed += [int]($passLine.Line -replace '\D','') }; if ($skipLine) { $skipped += [int]($skipLine.Line -replace '\D','') }; if ($exit -ne 0) { $failed++; Write-Output "FAILED: $($_.Name)"; $output } }; Write-Output "FILES=$files PASSED=$passed FAILED_FILES=$failed SKIPPED=$skipped"; if ($failed -gt 0) { exit 1 }` - **13 files, 65 passed, 0 failed, 0 skipped**. Axios requests use a mock adapter. Source checks are not browser rendering. |
+| Production build | PASS (retry) | `npm run build` from `frontend`: Vite 7.3.7 transformed **1,936 modules**. Restricted attempts failed before transforming with Windows `spawn EPERM`; retry outside the restricted sandbox passed. Non-fatal ignored `use client` directives and >500 kB bundle warning remain. |
+| Python syntax | PASS | From `backend`: `..\.venv\Scripts\python.exe -B -c "import ast,pathlib; files=['app/main.py','app/api/tenant_dashboard.py','app/schemas/tenant_dashboard.py','tests/test_tenant_dashboard_isolated.py']; [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'), filename=p) for p in files]; print('AST syntax PASS:', len(files), 'files')"` - 4 files parsed without bytecode output. |
+| Diff / whitespace | PASS | `git diff --check` returned 0. Scoped trailing-whitespace scan passed for Phase 14A.16 changed files. |
+| Browser / PostgreSQL / deployed schema | NOT TESTED | No browser rendering, PostgreSQL connection, or migration execution occurred. The ownership migration is DRAFT / NOT APPLIED. |
+| Enabled tenant dashboard endpoints | PASS (code/tests) | `GET /tenant/dashboard/summary` and `GET /tenant/dashboard/attendance-summary` only. Existing global dashboard/analytics APIs remain default-denied. No trend endpoint or write method was added. |
+| Credential / cluster / database safety | NOT RUN | No real database, PostgreSQL, credential, DPAPI, service, cluster, ACL, application DB configuration, or port operation occurred. Credential rotation A-E remains BLOCKED / NOT APPROVED; Phase 14A.17 was not started. |
+
+The dashboard uses only tenant-owned Student, Teacher, Class, Subject, Attendance and AttendanceRecord data; AttendanceRecord aggregates enforce the Phase 14A.15 same-College links and distinct counts. The recorded presence rate numerator is present plus late; denominator is classified present, late and absent records, with null for zero denominator. Historical trends remain unavailable because assignment/enrollment effective dates are absent. See `PHASE_14A16_TENANT_DASHBOARD_ANALYTICS.md`.
+## Phase 14A.17 â€” Tenant API Coverage Audit (2026-11-10)
+
+- **PASS (backend tenant suite):** `..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_tenant_*' -v` from `backend`: **114 passed, 0 failed, 0 skipped**. In-memory synthetic SQLite and in-process FastAPI only. Starlette/httpx TestClient deprecation warning was non-fatal.
+- **PASS (frontend):** serial per-file Node suite: **13 files, 65 passed, 0 failed, 0 skipped**. No parallel workers.
+- **PASS (build on retry):** `npm run build` from `frontend`; restricted first attempt failed before transforming with Windows `spawn EPERM`; retry outside restricted sandbox passed with Vite 7.3.7 and 1,936 modules. Non-fatal ignored `use client` and large-chunk warnings.
+- **PASS (Python AST):** BOM-aware syntax check parsed 74 files under `backend/app` and tenant test files. The initial UTF-8-only AST pass hit a pre-existing BOM in `app/api/auth.py`; it was rerun using `utf-8-sig` and passed.
+- **PASS:** `git diff --check`; scoped trailing-whitespace scan passed.
+- **PASS (implementation inventory):** 17 explicitly enabled tenant operations: `GET /tenant/memberships`; `GET,PATCH /tenant/pilot/college-profile`; GET list/detail for Subjects, Classes, Teachers, Students, Attendance and Attendance records; `GET /tenant/dashboard/summary`; `GET /tenant/dashboard/attendance-summary`. Default-deny remains on legacy routers; no wildcard exemption found.
+- **REVIEW REQUIRED:** OpenAPI path+method collisions exist for tenant/legacy overlays; generated operation metadata may identify the later legacy handler although behavioral tests exercise the tenant route. Resolve or validate generated API contract before publishing it to client generators.
+- **BLOCKED / NOT TESTED:** Admin Reports and Notifications links and legacy teacher/student dashboard/attendance pages remain reachable but call default-denied APIs. PostgreSQL/deployed schema and browser rendering were not tested. Tenant ownership migration remains DRAFT / NOT APPLIED; credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. App import invoked `load_dotenv` for `backend/.env` and read `DATABASE_URL` into process memory; its value was not printed or independently inspected. Tests used in-memory SQLite overrides and no database connection was made. No `.env`/database configuration was modified and no DPAPI file was accessed. No PostgreSQL, service, cluster, ACL or port operation occurred.
+
+See `PHASE_14A17_TENANT_API_COVERAGE_AUDIT.md` for route-by-route inventory, gate details, frontend integration, ownership constraints and exact commands.
+## Phase 14A.18 â€” Integration Readiness Remediation (2026-11-10)
+
+- **PASS (navigation):** Removed Reports from Admin/Teacher sidebars. Kept direct Reports and Notifications paths but replaced their components with an inert â€œnot available yetâ€ state. Header Notifications is labeled unavailable. Legacy pages/files/services remain on disk but are not mounted; no legacy report/notification call is dispatched by these routes.
+- **PASS (OpenAPI):** All default-deny legacy router includes now use `include_in_schema=False`; runtime routes and the default-deny dependency remain. OpenAPI retains exact tenant handler operations and excludes blocked legacy operations. New test asserts all 17 tenant method/path/operation IDs and blocked method/path omission; in-process request still gets 503 from the gate.
+- **PASS (dotenv isolation):** Added opt-in `ATTENDX_SKIP_DOTENV=1` requiring separate `ATTENDX_TEST_SQLALCHEMY_URL`; it skips dotenv and never falls back to `DATABASE_URL`. Default path still invokes dotenv. Validation used synthetic `sqlite://` process environment; no `.env` or connection string changed or read during these Phase 14A.18 tests.
+- **PASS (backend):** Focused Phase 14A.18 readiness suite **6 passed**; full tenant suite **119 passed, 0 failed, 0 skipped**. Both ran with dotenv opt-out and synthetic SQLite; non-fatal TestClient/httpx and SQLite datetime deprecation warnings.
+- **PASS (frontend):** Focused readiness file **4 passed**; full serial suite **14 files, 69 passed, 0 failed, 0 skipped**. `node --test` worker launch hit Windows `spawn EPERM`; direct test file and individual-file serial runner passed. One initial assertion was corrected (regex overmatched `TenantAdminDashboard`) before final passing run.
+- **PASS (build on retry; env handling UNKNOWN):** `npm run build` transformed 1,933 modules. Restricted invocation failed before transform with `spawn EPERM`; authorized retry passed with non-fatal ignored `use client` and >500 kB chunk warnings. Standard Vite env-file/process-variable loading was not inspected, so whether frontend env values were loaded or embedded is UNKNOWN; no values appeared in output.
+- **PASS:** BOM-aware AST check parsed 75 Python files; `git diff --check` and scoped whitespace scan passed.
+- **NOT TESTED / UNKNOWN:** Browser rendering and PostgreSQL/deployed schema behavior were not tested. Whether the stock Vite build loaded frontend env files/process `VITE_*` values is UNKNOWN; values were not inspected or emitted. Ownership migration remains DRAFT / NOT APPLIED; no database operation occurred. Credential rotation Aâ€“E remains BLOCKED / NOT APPROVED; no Phase 14A.19 work began.
+
+See `PHASE_14A18_INTEGRATION_READINESS_REMEDIATION.md` for exact test commands, route/docs behavior, remaining limitations, and safety scope.
+## Phase 14A.19 â€” Frontend Environment and Release-Safety Audit (2026-11-10)
+
+- **PASS (inventory):** One frontend `.env` file was identified by filename and metadata only (34 bytes); its contents and variable names were not read. No `vite.config.*` file exists. Source references only the public API aliases `VITE_API_BASE_URL`/`VITE_API_URL` and Vite `DEV`/`PROD` flags; no `process.env` or backend-only setting reference was found.
+- **PASS (API URL hardening):** Development-only default is loopback. Production now fails closed if missing, requires non-loopback HTTPS, rejects invalid/credential/query/fragment URL components, and normalizes trailing slashes. Actual deployment URL remains UNKNOWN; no URL was invented.
+- **PASS (artifact audit):** Safe Vite build ran with dotenv disabled and sanitized `VITE_*` process variables plus a temporary reserved `.invalid` API setting. The build artifact scan found no backend-only configuration markers, credential URL patterns, recognized key markers, internal paths, source maps, known development diagnostics, or localhost fallback. Artifact is validation-only, not deployable.
+- **PASS (tests):** Focused environment/artifact suite **9 passed**. Frontend serial suite **15 files, 78 passed, 0 failed, 0 skipped**.
+- **PASS (build):** Vite 7.3.7 transformed **1,934 modules**. Four restricted build attempts during iteration failed before transform with Windows `spawn EPERM`; their outside-sandbox retries passed, including the final safe build. Non-fatal ignored `use client` and large-chunk warnings remain. Two pre-final serial test runs had 7 then 6 failed files during URL resolver/test adaptation; final serial run passed 78/78.
+- **PASS:** `git diff --check` and scoped whitespace scan passed.
+- **NOT TESTED:** Browser, actual deployment environment, backend, and PostgreSQL. No Python files changed; AST check not applicable.
+- **UNKNOWN / BLOCKED:** `.env` variable names and real production API URL remain unknown due the no-content-inspection constraint. Ownership migration is DRAFT / NOT APPLIED; credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. No Phase 14A.20 work began.
+
+See `PHASE_14A19_FRONTEND_ENVIRONMENT_AUDIT.md`. No `.env` contents were read or changed; no database, credential/DPAPI, service, cluster, ACL, or port operation occurred.
+
+## Phase 14A.20 â€” Cross-Layer Regression and Tenant-Boundary Audit (2026-11-10)
+
+- **PASS (frontend serial suite):** Ran each `tests/*.test.mjs` one at a time in sorted order: **16 files, 79 passed, 0 failed, 0 skipped**. An initial run found one case-sensitive assertion mismatch in the new route regression test; corrected the assertion and the complete rerun passed.
+- **PASS (API/artifact suite):** `node tests/api-base-url.test.mjs`: **9 passed, 0 failed, 0 skipped**, after the final validation build.
+- **PASS (safe validation build):** `node --input-type=module -e "import { build } from 'vite'; await build({ envFile: false });"` with process `VITE_*` keys cleared by name and a temporary reserved `.invalid` API base; Vite 7.3.7 transformed 1,933 modules. Restricted attempt failed before transform with Windows `spawn EPERM`; retry outside the restricted sandbox passed. Ignored `use client` and >500 kB chunk warnings are non-fatal. Output is validation-only and not deployable.
+- **PASS (contract/source audit):** Reviewed the 17 explicitly enabled tenant method/path operations, frontend service query/method handling, response schemas, route ordering and gate. No server authorization change or additional endpoint was made. Changed `/admin/attendance/legacy` from mounting the old page (whose unscoped request and legacy date field did not match the tenant contract) to the existing unavailable page; legacy source remains preserved. Added `phase14a20-cross-layer.test.mjs` for this regression.
+- **MEDIUM finding:** `FaceCamera` can receive a `getUserMedia()` stream after component unmount if permission resolves late; the existing cleanup cannot stop a stream not yet acquired. Helper tests cover track stopping, but not this component race. No browser verification occurred; a lifecycle guard and focused regression test remain follow-up work.
+- **PASS:** `git diff --check` and scoped trailing-whitespace scan passed after edits (exact final checks below in the Phase 14A.20 audit report).
+- **NOT RUN / NOT APPLICABLE:** Backend suite not run (static backend contract and existing test coverage reviewed; no backend code changed); Python AST not applicable (no Python files changed).
+- **NOT TESTED:** Browser rendering, real camera/device flows, PostgreSQL compatibility, deployed schema and live API behavior. Student attendance session/face/QR operations remain behind default-deny and are not enabled by this phase.
+- **UNKNOWN:** Production API endpoint remains unknown. Tenant migration remains DRAFT / NOT APPLIED. Credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. Production readiness is not claimed.
+
+See `PHASE_14A20_CROSS_LAYER_REGRESSION_AUDIT.md` for exact route inventory, flow coverage, commands and limits. No `.env`, token/credential/DPAPI content, database/PostgreSQL, service, cluster, port, ACL or firewall operation occurred.
+
+## Phase 14A.21 â€” FaceCamera Async Lifecycle Race Fix (2026-11-10)
+
+- **PASS (implementation):** `FaceCamera` tracks mounted state and request generation; stale stream resolutions stop every acquired track before stream assignment, React state updates, video attachment or camera processing. Rejected stale requests skip state updates and logging. Normal current acquisition and cleanup behavior remains.
+- **PASS (focused tests):** `node tests/face-camera-lifecycle.test.mjs`: **5 passed, 0 failed, 0 skipped** with deterministic deferred promises.
+- **PASS (frontend serial suite):** **17 files, 84 passed, 0 failed, 0 skipped.** Ran each Node test file serially; no worker pool.
+- **PASS (safe Vite build):** `node --input-type=module -e "import { build } from 'vite'; await build({ envFile: false });"` with inherited process `VITE_*` variables cleared by name and a temporary reserved `.invalid` API base. Vite 7.3.7 transformed 1,933 modules. Restricted attempt failed before transform with Windows `spawn EPERM`; same sanitized build retry outside the restricted sandbox passed. Ignored `use client` and large-chunk warnings remain. Build output is validation-only, not deployable.
+- **PASS:** `git diff --check`; scoped whitespace scan on six Phase 14A.21 files passed.
+- **BLOCKED / NOT TESTED:** Required mounted React component lifecycle test and browser camera behavior. No DOM renderer/test utility is installed (`jsdom`, `happy-dom`, `linkedom`, `react-test-renderer`, and Testing Library renderer are absent); no dependency/configuration was added. The five tests exercise the integrated acquisition helper and source guards, not a mounted component, so they do not independently observe actual React state or a DOM video element.
+- **NOT TESTED / UNKNOWN:** Browser permission prompt and real camera device behavior. No PostgreSQL or database test was run.
+
+See `PHASE_14A21_CAMERA_LIFECYCLE_FIX.md` for implementation details, exact commands, and the component-test limitation. No unrelated files were modified. No `.env`, secret, token, credential, DPAPI, database/PostgreSQL, service, cluster, port, ACL or firewall operation occurred; no dependency was installed and no commit/push occurred.
+
+## Phase 14A.22 â€” FaceCamera Component-Level Lifecycle Verification (2026-11-10)
+
+- **PASS:** With explicit approval, added exact dev dependency `jsdom@26.1.0`; preserved the pre-existing Leaflet changes. Added five tests that mount the actual React component with ReactDOM/jsdom and deterministic deferred media requests. They verify late-stream track stopping/no attachment or processing, normal attach/cleanup, rejected late requests, and repeated setup/cleanup.
+- **PASS:** The mounted tests found and fixed two defects in `FaceCamera.jsx`: the `stopCameraStream` import pointed at the wrong module, and cleanup did not clear `srcObject` after React detached the video ref. Both fixes now have component-level regression coverage.
+- **PASS (tests):** Component suite **5 passed**; helper lifecycle suite **5 passed**; camera registration suite **12 passed**; complete serial frontend suite **18 files, 89 passed, 0 failed, 0 skipped**.
+- **PASS (safe build):** Vite 7.3.7 transformed **1,933 modules** using dotenv disabled and a reserved `.invalid` API URL. This validation-only build is not deployable. Non-fatal ignored `use client` and large-chunk warnings remain.
+- **PASS:** `git diff --check` and scoped whitespace scan passed. Restricted Vite SSR/build attempts returned Windows `spawn EPERM`; their retries outside the restricted sandbox passed. An early component run exposed each defect noted above; the final focused and full serial runs passed.
+- **LIMITATION / NOT TESTED:** The harness observes actual DOM and effects after unmount but does not directly spy on internal React state-setter calls. Browser rendering and physical camera behavior were not tested.
+- **NOT TESTED:** PostgreSQL/database compatibility. Tenant migration remains DRAFT / NOT APPLIED; credential rotation Aâ€“E remains BLOCKED / NOT APPROVED. Production readiness is not claimed.
+
+See `PHASE_14A22_FACECAMERA_COMPONENT_TEST.md` for exact commands, dependency details, and safety boundaries. No `.env`, secret, credential/DPAPI, database/PostgreSQL, service, cluster, port, ACL, or firewall operation occurred; no commit or push occurred.
+
+## Phase 14A.23 â€” Tenant Authorization Negative-Path Audit (2026-11-10)
+
+- **PASS (focused):** `tests.test_tenant_authorization_negative_paths`: **5 passed, 0 failed**. Table-driven synthetic SQLite requests cover unauthenticated access to all 17 enabled operations; no-membership, inactive membership, suspended College, Super Admin, role mismatch, ambiguous selection, and foreign selector cases across 16 College-context operations. Denial responses are checked for synthetic cross-College markers.
+- **PASS (tenant suite):** `unittest discover -s tests -p 'test_tenant*.py'`: **125 passed, 0 failed** using synthetic in-memory SQLite and the documented dotenv opt-out.
+- **PASS (AST):** Python AST parsed the new test file without importing application configuration.
+- **PASS:** `git diff --check` and scoped whitespace scan passed.
+- **NOT RUN:** Frontend tests/build (no frontend files changed). Browser testing remains NOT TESTED.
+- **NOT TESTED:** PostgreSQL compatibility, live application database, deployed schema and production API endpoint. SQLite does not establish PostgreSQL compatibility.
+- **Environment limitations:** The global Python lacked FastAPI/SQLAlchemy; the backend venv's Starlette TestClient required unavailable `httpx2`. No installation was attempted. The existing parent project venv successfully ran both suites, with Starlette and SQLite datetime deprecation warnings. These initial import failures were environmental, not assertion failures.
+- **Status:** Tenant migration remains **DRAFT / NOT APPLIED**; credential rotation Aâ€“E remains **BLOCKED / NOT APPROVED**; production API endpoint **UNKNOWN**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A23_TENANT_AUTHORIZATION_AUDIT.md` for the 17-operation authorization table, existing route-level evidence, exact commands, and limitations. Only the Phase 14A.23 test and documentation files were changed; pre-existing user modifications and untracked files were preserved. No database/PostgreSQL, credentials/DPAPI, service, cluster, port, ACL, firewall, `.env`, commit, push or destructive Git operation occurred.
+
+## Phase 14A.24 â€” Tenant Migration and ORM Consistency Audit (2026-11-10)
+
+- **PASS (static comparison):** All 12 nullable business `college_id` columns, College FK types/actions, 12 `(id,college_id)` parent unique constraints, 17 same-College composite FKs with ordered columns/names/actions, and 13 tenant indexes were compared between ORM metadata and the ownership SQL draft. Definitions align; direct College FK names are explicit in SQL but unnamed in ORM metadata (naming drift only).
+- **PASS (focused static tests):** `tests.test_tenant_ownership_migration_static` plus `tests.test_tenant_migration_static`: **11 passed, 0 failed**.
+- **PASS (tenant suite):** **125 passed, 0 failed** with dotenv disabled and explicit synthetic SQLite. This is not PostgreSQL validation.
+- **PASS (AST):** 14 relevant Python model/helper/router/test files parsed.
+- **PASS:** `git diff --check` and scoped whitespace scan passed.
+- **NOT TESTED:** PostgreSQL SQL parser unavailable (`pglast`, `pg_query`, `sqlglot`, `sqlparse` absent); SQL was not executed. PostgreSQL catalog, locking, transaction rollback/recovery and compatibility remain unverified. Frontend tests/build not run (no frontend change).
+- **DESIGN RISKS:** Composite notification Student FK uses `ON DELETE SET NULL`, which can null both `student_id` and `college_id`, erasing event tenant attribution. The generic ownership binder has no production business-write caller. `StudentIdCounter` has no College field and is excluded. Draft requires pre-existing legacy tables and cannot prepare an empty schema. See report for proposed decisions; no schema changes made.
+- **Initial environment failures:** Global Python lacked FastAPI/SQLAlchemy; backend venv TestClient required missing `httpx2`. No dependencies were installed. Successful tests used existing parent venv; only deprecation warnings remained.
+- **Status:** Tenant migration **DRAFT / NOT APPLIED**; credential rotation Aâ€“E **BLOCKED / NOT APPROVED**; production API endpoint **UNKNOWN**; PostgreSQL compatibility **NOT TESTED**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A24_TENANT_MIGRATION_ORM_AUDIT.md`. Only the Phase 14A.24 report and these acceptance/test summaries changed; no database, PostgreSQL, secret, `.env`, service, cluster, port, ACL or firewall operation occurred.
+
+## Phase 14A.25 â€” Tenant Schema Risk Resolution Design (2026-11-10)
+
+- **PASS (review deliverable):** Read-only investigation documented NotificationEvent composite `ON DELETE SET NULL` attribution loss; business-write parent/ownership prerequisites; global-by-year StudentIdCounter tradeoffs; and separate compatible-legacy, empty, and partial-schema installation paths. Recommendation is design-only; no schema decision was implemented.
+- **FAIL (mixed test assertions):** `tests.test_admin_crud_isolated` plus tenant tests: **21 run, 19 passed, 2 failed**. The two assertions expect the legacy Class create route to be operational; the default-deny gate returned 503. No environment/import failure occurred in this run.
+- **PASS:** Focused tenant ownership/foundation rerun: **19 passed, 0 failed**.
+- **PASS:** Complete tenant suite: **125 passed, 0 failed**, using synthetic SQLite and static tests only.
+- **NOT TESTED:** PostgreSQL parser/execution, database migration, browser/frontend, production data, SQL locking/rollback. No SQL parser or SQL execution was used.
+- **Status:** Tenant migration **DRAFT / NOT APPLIED**; tenant business writes **BLOCKED**; credential rotation Aâ€“E **BLOCKED / NOT APPROVED**; production API endpoint **UNKNOWN**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A25_TENANT_SCHEMA_RISK_RESOLUTION.md`. `backend/create_admin.py` was explicitly excluded from inspection. No database, PostgreSQL, credential, DPAPI, service, cluster, port, ACL, `.env`, commit, push or destructive Git operation occurred.
+
+## Phase 14A.26 â€” Public Website Upgrade (2026-11-10)
+
+- **PASS:** Reworked the existing `/` landing page, retaining AttendX violet branding while adding navy/white/mint styling, responsive navigation, ten explicitly classified feature cards, role/workspace previews, benefits, qualified workflow, security/privacy limitations, pricing/registration states, FAQ, and footer.
+- **PASS:** Existing `/login` route remains the only login navigation target. No College registration route or form exists; registration is marked Planned. No verified plans/prices, contact method, Privacy Policy page or Terms page were found, so none are fabricated.
+- **PASS (focused UI tests):** `node tests/landing-page.test.mjs`: **4 passed, 0 failed, 0 skipped** using ReactDOM/jsdom and a local router adapter.
+- **PASS (serial frontend suite):** **19 files, 93 passed, 0 failed, 0 skipped**, each test file invoked individually in sorted order with Node `spawnSync`.
+- **PASS (validation-only Vite):** Vite 7.3.7 transformed **1,933 modules** using `envFile:false`, sanitized inherited `VITE_*` variables and a reserved `.invalid` API URL; `write:false` preserved existing dist files. Not deployable. Nonfatal dependency `use client` warnings remain.
+- **Environment/iteration details:** Initial restricted runs failed with Windows `spawn EPERM`; the first out-of-sandbox focused attempt found a router test adapter import error. The adapter was corrected, and final focused/full suites passed. No final test assertion failures.
+- **NOT TESTED:** Browser rendering, visual responsive inspection, actual mobile device, screen-reader audit, PostgreSQL, or registration/contact/pricing workflows.
+- **Status:** Tenant migration remains **DRAFT / NOT APPLIED**; credential rotation Aâ€“E remains **BLOCKED / NOT APPROVED**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A26_PUBLIC_WEBSITE_UPGRADE.md` for the route inventory, feature verification classifications, test commands/results, limitations and changed-file list. No backend/auth/tenant gate/database/config/credential/DPAPI/service/cluster/port operation occurred; no dependency was installed.
+
+## Phase 14A.27 - Public Website Browser/Responsive Verification (2026-11-10)
+
+- **BLOCKED / NOT TESTED:** Real-browser E2E. No Playwright/Puppeteer package, browser harness, browser-control tool or discoverable browser executable was available. No local server/browser was started.
+- **PASS (jsdom/component):** Focused `node tests/landing-page.test.mjs`: **4 passed, 0 failed, 0 skipped**. Tests mount React in jsdom with a router adapter; they do not constitute browser navigation or visual testing.
+- **PASS (serial frontend suite):** **19 files, 93 passed, 0 failed, 0 skipped**, each file invoked serially.
+- **PASS (safe validation build):** Vite 7.3.7 transformed **1,933 modules**, dotenv disabled, inherited `VITE_*` names cleared, reserved `.invalid` API base, `write:false`. Validation-only, not deployable; dependency `use client` warnings are nonfatal.
+- **PASS (static/basic accessibility):** Route source retained; registration remains planned/no form; anchor targets and semantic FAQ/menu state verified by jsdom/source checks; test syntax, `git diff --check`, and scoped whitespace scan passed.
+- **NOT TESTED:** Desktop/tablet/mobile viewport rendering, actual login click-through, browser console/network, contrast/WCAG, screen reader, physical Android, real registration/pricing/contact workflows.
+- **Status:** Tenant migration **DRAFT / NOT APPLIED**; credential rotation A-E **BLOCKED / NOT APPROVED**; PostgreSQL **NOT TESTED**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A27_BROWSER_RESPONSIVE_VERIFICATION.md` for repository status, detailed checks, route/product findings and limitations. Existing source modifications and untracked files were preserved. No application code change or defect correction was needed.
+
+## Phase 14A.28 - Public Website Secondary Pages (2026-11-10)
+
+- **PASS:** Added `/about`, `/features`, `/how-it-works`, `/founder`, `/contact`, `/privacy` and `/terms`; preserved `/` and `/login`; unknown paths retain fallback. Added reusable public header/footer/page shell and integrated the landing page with shared chrome. Protected role route wrappers remain intact.
+- **PASS:** Feature/flow availability is labeled accurately. No fake registration, contact form, pricing/payment, founder biography, legal entity, or unsupported compliance/security claims were added.
+- **PASS (legal disclosure):** Privacy and Terms are prominent **DRAFT - OWNER AND LEGAL REVIEW REQUIRED** pages, not publication-ready policy or a user consent/acceptance flow.
+- **PASS (focused):** `node tests/public-pages.test.mjs` **5/5** and `node tests/landing-page.test.mjs` **4/4**.
+- **PASS (frontend serial):** **20 files, 98 passed, 0 failed, 0 skipped**, each test file executed individually.
+- **PASS (safe build):** Dotenv-disabled Vite 7.3.7 validation, reserved `.invalid` API base, inherited `VITE_*` names cleared and `write:false`; **1,944 modules** transformed, existing `dist` preserved. Not deployable; nonfatal dependency directive warnings remain.
+- **PASS:** Test syntax, `git diff --check`, and scoped whitespace checks.
+- **NOT TESTED / BLOCKED:** Browser E2E, viewport/visual and physical-device testing, real browser navigation/scrolling, formal WCAG/contrast and screen-reader audit.
+- **Status:** Tenant migration **DRAFT / NOT APPLIED**; credential rotation A-E **BLOCKED / NOT APPROVED**; PostgreSQL validation **NOT TESTED**; production readiness **NOT CLAIMED**.
+
+See `PHASE_14A28_PUBLIC_WEBSITE_SECONDARY_PAGES.md`. Existing Git changes were preserved; no backend/auth/tenant/database/credential/DPAPI/environment/deployment changes or dependency installs occurred.
+## Phase 14A.29 - College Registration and Onboarding Foundation Audit (2026-11-10)
+
+- **PASS (architecture audit):** Current source has College/CollegeMembership tenant foundation and active-membership/active-College context checks, but no College registration application model, submission/status/review API, application audit lifecycle, or College Admin invitation/activation workflow. The public site correctly says registration is planned/unavailable; `/platform` is a Super Admin-protected signed-in landing page, not an application console.
+- **PASS (authorization boundary tests):** From `backend`, with `ATTENDX_SKIP_DOTENV=1` and `ATTENDX_TEST_SQLALCHEMY_URL=sqlite://`, ran `..\.venv\Scripts\python.exe -m unittest tests.test_tenant_foundation_isolated tests.test_tenant_membership_selection_isolated tests.test_tenant_api_pilot_isolated tests.test_tenant_authorization_negative_paths -v`: **38 passed, 0 failed**. These synthetic SQLite tests cover adjacent tenant authorization only, not registration or PostgreSQL compatibility. Starlette emitted a non-failing `httpx` deprecation warning.
+- **NOT TESTED:** Registration, application lifecycle, Super Admin review API, College provisioning, invitation delivery/activation, PostgreSQL migration/transactions, browser UI, production endpoint.
+- **BLOCKED:** Real registration requires approved persistent schema and lifecycle decisions; credentials A-E remain **BLOCKED / NOT APPROVED**. No registration implementation or mock success path was added.
+- **Safety:** No PostgreSQL/database/SQL/migration, `.env` or secret, credential/DPAPI, service/cluster/port/ACL, provider, deployment, or bootstrap operation occurred. `backend/create_admin.py` was not opened or modified; no dependency was installed.
+
+See `PHASE_14A29_COLLEGE_REGISTRATION_ONBOARDING.md` for the model/route inventory, security boundaries, exact future approvals, limitations and workflow reality matrix.
+
+## Phase 14A.29 implementation continuation — 2026-11-10
+
+- **IMPLEMENTED IN SOURCE:** Public College application submission/status API and pages; Super Admin-only list/detail/history/start-review/approve/reject API and review UI; ORM application/review models; registration validation; draft SQL migration. Endpoint inventory: `POST /college-registration/applications`, `POST /college-registration/status`, `GET /platform/college-applications`, `GET /platform/college-applications/{id}`, `GET /platform/college-applications/{id}/history`, and POST `/{id}/start-review`, `/{id}/approve`, `/{id}/reject` under `/platform/college-applications`.
+- **PASS (backend):** 48 tests passed, 0 failed. Synthetic in-memory SQLite only, dotenv opted out, synthetic test signing key; suites cover registration and adjacent tenant authorization. A Starlette/httpx deprecation warning was emitted; the deprecated HTTP 422 constant was replaced with its current equivalent after the test run.
+- **PASS (frontend):** Serial per-file run, **21 files; 104 passed, 0 failed, 0 skipped**. The sandboxed worker invocation produced Windows `spawn EPERM`; serial retries outside that process restriction passed. The first complete serial run found one stale text assertion; it was corrected and the complete suite rerun.
+- **PASS (validation-only build):** Vite 7.3.7 transformed 1,947 modules with dotenv loading disabled, reserved `.invalid` API URL, source maps disabled and `write:false`. No build artifact was written; this is not deployable. Non-fatal ignored `use client` warnings remain.
+- **PASS:** Python AST, `git diff --check`, and scoped trailing-whitespace scan.
+- **BLOCKED:** Persistent operation: new migration `DRAFT_20261110_add_college_registration_workflow.sql` depends on applied compatible tenant schema and remains **DRAFT / NOT APPLIED**. PostgreSQL parser, migration and runtime validation were not performed.
+- **LIMITATIONS:** Approved applications create only a pending College, inactive `college_admin` User and pending membership; no activation or invitation is provided. Public rate limiting, privacy/retention approval, provider, production deployment and concurrent transaction guarantees remain unresolved. Teacher/student/academic writes and attendance submission are not completed by this registration phase; existing default-deny behavior remains.
+- **NOT TESTED:** Real browser, PostgreSQL, email delivery, deployed schema and production endpoint (UNKNOWN). Production readiness is not claimed. Credential rotation A–E remains **BLOCKED / NOT APPROVED**.
+- **SAFETY:** No PostgreSQL/database, migration execution, credentials/DPAPI, `.env`, service, cluster, port, ACL, provider, bootstrap or `backend/create_admin.py` operation occurred. Existing user changes and untracked files were preserved.
+
+See `PHASE_14A29_COLLEGE_REGISTRATION_ONBOARDING.md` implementation-continuation addendum for behavior and remaining blockers.
+
+## Registration failure fix — 2026-11-10
+
+- **PASS (source trace):** Form fields match the existing `POST /college-registration/applications` request schema. The UI was forwarding backend `detail`; it did not mask the 409 response.
+- **Root-cause scope:** The exact displayed generic text came from HTTP 409. Existing-account conflict, duplicate application, and all SQLAlchemy integrity failures had been conflated into that same detail. The user's individual branch cannot be distinguished without the actual response diagnostics; no live service/database was contacted. A missing registration table maps to 503, not this text.
+- **FIXED:** Public 409 detail is actionable but non-enumerating; only unique constraints map to 409; other integrity failures map to sanitized 503 with metadata-only server logs. Public 422 validation errors omit the submitted input/body. This was necessary after a synthetic test demonstrated the default FastAPI error echoed the password when another required field was absent.
+- **PASS (synthetic backend):** 50 focused registration/tenant tests passed on in-memory SQLite, including 201 persisted application/reference, required-field errors, invalid email/phone/password/mismatch, duplicate conflict, missing-table 503 and password redaction.
+- **PASS (frontend):** 21 serial files, **105 passed, 0 failed, 0 skipped**; focused public page 9/9.
+- **NOT TESTED / BLOCKED:** Actual configured DB persistence and PostgreSQL are unverified. The registration migration remains **DRAFT / NOT APPLIED**. Do not claim a live registration works until an authorized schema rollout and verification.
+
+See `REGISTRATION_FAILURE_FIX.md` for exact flow, status/root-cause confidence, commands, and remaining boundary.
+
+## Phase 14A.30 — Super Admin College Management (2026-11-10)
+
+- **IMPLEMENTED IN SOURCE:** application list/search/status filter/detail/history/review; College directory search/filter/detail, associated College Admin membership/account state, profile editing, suspend/reactivate, and status history. Platform endpoints are protected by the server-side Super Admin dependency.
+- **PASS (backend):** 55 registration, platform College management and tenant security tests passed on synthetic SQLite. Coverage includes platform role denials, protected profile fields, approval retry, status transitions, history, and tenant denial after College suspension.
+- **PASS (frontend):** 22 serial files, **107 passed, 0 failed, 0 skipped**. New directory UI tests 2/2; application review and route tests passed. These are mocked API/jsdom tests, not browser E2E.
+- **PASS (validation build):** Vite 7.3.7 transformed 1,948 modules with dotenv disabled, inherited VITE values cleared by name, reserved `.invalid` URL and `write:false`; validation only, no artifacts written.
+- **BLOCKED:** New College profile/history schema migration is **DRAFT / NOT APPLIED**. Configured DB persistence and PostgreSQL behavior are unverified. College Admin accounts remain inactive/pending activation with no invitation; teacher/student/academic business writes and teacher attendance submission remain unimplemented or gated.
+- **NOT TESTED:** PostgreSQL, migration application, browser, production endpoint/deployment. Production readiness not claimed; credential rotation A–E remains BLOCKED / NOT APPROVED.
+
+See `PHASE_14A30_COLLEGE_MANAGEMENT.md` for exact routes, A–H status, schema dependency, tests and manual verification steps.
+
+## Student/Teacher registration and academic progression implementation slice (2026-11-10)
+
+- **IMPLEMENTED IN SOURCE, PARTIAL:** Added College Admin-scoped Student and Teacher creation, generated Student code / database Teacher ID, inactive account plus pending membership provisioning, optional same-College class/subject assignments, Student admission/current-year fields, and explicit academic promotion/history. Exact operations: Student `GET/POST /students/`, `GET /students/{student_id}`, `GET /students/{student_id}/academic-history`, `POST /students/{student_id}/promotions`; Teacher `GET/POST /teachers/`, `GET /teachers/{teacher_id}`. No other business writes were enabled; the existing default-deny gate remains for legacy operations.
+- **PASS (backend tenant suite):** From `backend`, `ATTENDX_SKIP_DOTENV=1`, explicit `ATTENDX_TEST_SQLALCHEMY_URL=sqlite://`, synthetic signing key, `python -m unittest discover -s tests -p 'test_tenant*.py' -q`: **135 passed, 0 failed**. Tests use synthetic in-memory SQLite; no PostgreSQL compatibility claim follows.
+- **PASS (frontend):** 22 test files run sequentially, **107 passed, 0 failed, 0 skipped**. The normal `node --test --test-concurrency=1 tests/*.test.mjs` worker path failed with Windows `spawn EPERM`; direct per-file retries initially showed environment `EPERM` and stale expectation issues, then the final reviewed serial per-file run passed all tests.
+- **PASS (validation-only Vite build):** Vite 7.3.7 transformed 1,954 modules with `envFile:false`, reserved `https://validation-only.invalid/api`, and `write:false`. No build output was written; this is not deployable.
+- **PASS:** Python AST parsing for 10 changed Python files; `git diff --check` and scoped whitespace scan passed.
+- **DRAFT / NOT APPLIED:** `database/migrations/DRAFT_20261111_student_teacher_registration_academics.sql` adds profile/academic columns, guardian parent fields and same-College academic history. No SQL parser, configured DB, PostgreSQL or migration execution was performed.
+- **BLOCKED / NOT IMPLEMENTED:** New accounts and memberships remain inactive/pending with no invitation, activation or password setup; those users cannot log in. Teacher self-service assignment access and attendance writes remain gated. Profile-photo handling, face consent/encryption/liveness/verification, edit/deactivation workflows, academic directory administration, notifications and real email delivery are incomplete. Existing global uniqueness may reject cross-College reused emails/roll/employee IDs.
+- **NOT TESTED / UNKNOWN:** PostgreSQL, real database persistence, browser UI, email, production API endpoint and deployment. Production readiness is not claimed. Credential rotation Aâ€“E remains **BLOCKED / NOT APPROVED**.
+- **SAFETY:** No database/PostgreSQL/SQL operation, migration execution, `.env` or credential/DPAPI access, service/cluster/port/ACL operation, or dependency install occurred. `backend/create_admin.py` was not accessed.
+
+See `STUDENT_TEACHER_REGISTRATION_IMPLEMENTATION.md` for API contracts, data behavior, test commands, incomplete requirements and blockers.- **LIMITATION / FAIL (separate legacy compatibility attempt):** `python -m unittest tests.test_guardian_api_isolated tests.test_face_api_isolated tests.test_admin_crud_isolated -q` ran 15 tests: 1 passed, 11 failed, 3 errored. Legacy route assertions expected unscoped guardian/face/Admin CRUD handlers to run, but the routes correctly returned the default-deny 503; guardian fixture setup also tried to recreate a table already created by ORM metadata. These do not indicate failure of the new tenant-scoped registration tests; the existing gate remains unchanged. Details are in `STUDENT_TEACHER_REGISTRATION_IMPLEMENTATION.md`.
+
+### 2026-11-10 — Backend failure triage and College registration verification
+
+- **PASS (focused synthetic backend):** From `backend`, with `ATTENDX_SKIP_DOTENV=1`, `ATTENDX_TEST_SQLALCHEMY_URL=sqlite://`, and a process-only synthetic `SECRET_KEY`, `..\.venv\Scripts\python.exe -m unittest tests.test_tenant_registration_isolated tests.test_college_registration_isolated -v`: **25 tests passed, 0 failed, 0 errors**. Coverage includes Student/Teacher tenant registration, College application persistence and one-time reference/token response, server-side Super Admin authorization, status filters for pending/approved/rejected, searches by official email/admin email/reference, detail reads, rejection without provisioning, duplicate decisions and approval safeguards. SQLite is not PostgreSQL validation.
+- **PASS (full frontend serial retry):** The first sandboxed direct Node test invocation failed with Windows `spawn EPERM` because Node's test runner could not spawn workers. Retried serially outside the process sandbox, invoking `node --test --test-concurrency=1 <file>` once for each of the **23** `frontend/tests/*.test.mjs` files: **110 passed, 0 failed, 0 skipped**. No frontend source changed. No build was run.
+- **FAIL / DIAGNOSED (full backend suite):** `..\.venv\Scripts\python.exe -m unittest discover -s tests -q`: **256 tests, 221 passed, 23 failed, 12 errored**. The 23 assertion failures are stale legacy expectations for Admin dashboard, attendance, GIS, face, notification, reports and other routes now held by the default-deny gate; they expect prior 200/201/403 responses while the gate returns its documented sanitized 503. No default-deny code or assertion was relaxed. The 12 errors are not registration regressions: 10 tests fail in setup because their hand-written SQLite `CREATE TABLE` statements duplicate tables already created by `Base.metadata.create_all` (`attendance_events`, `attendance_sessions`, `student_guardians`); two reconciliation CLI tests cannot write/clean synthetic temp files due Windows ACL/sandbox `PermissionError`. These categories were reproduced in the full-suite output; neither category is evidence that the protected routes should be enabled.
+- **Named failure audit:** The 23 failed assertions are `test_admin_can_create_and_update_classroom_gis_configuration`; `test_admin_crud_and_dashboard_statistics_persist_in_isolated_database`; `test_live_monitor_returns_enrolled_roster_and_pending_students`; `test_password_login_me_and_database_role_are_enforced`; the nine `test_face_api_isolated` cases `test_admin_face_registration_persists_only_after_consent_and_confirms_status`, `test_admin_face_registration_rejects_corrupt_image_signature`, `test_admin_face_registration_rejects_unsupported_type_and_oversized_upload`, `test_admin_face_registration_requires_explicit_consent`, `test_corrupt_image_is_rejected_and_registration_stays_false`, `test_duplicate_image_for_another_student_is_rejected_before_recognition`, `test_multiple_face_detection_branch_rejects_image`, `test_real_model_rejects_blank_no_face_image_without_persisting`, and `test_student_cannot_register_a_different_students_face_through_admin_route`; `test_history_and_read_updates_are_owner_scoped`; `test_legacy_attendance_reads_are_scoped_to_the_signed_in_profile`; `test_student_cannot_list_the_private_student_directory`; `test_teacher_cannot_create_attendance_for_another_teacher`; `test_expected_student_dashboard_route_returns_real_summary`; four role subcases of `test_common_login_and_server_role_boundary_for_all_active_roles`; and `test_forged_role_claim_invalid_credentials_inactive_and_invalid_tokens`. Each fails because its old API result expectation conflicts with the configured route gate’s 503 response; these tests must be reworked as gate-contract tests before being counted as feature tests.
+- **Named setup/error audit:** The 10 table-collision errors occur in `test_total_attendance_count_includes_both_storage_paths`; three `test_analytics_filters_isolated` cases; three `test_guardian_api_isolated` cases; and three `test_qr_flow_isolated` cases. They fail before route execution because the ORM metadata already creates each hand-written table. The remaining two are `test_cli_can_write_reviewable_csv` and `test_cli_writes_unapproved_json_and_refuses_to_overwrite`, blocked when Windows denies writes and cleanup to Python-created temporary directories. Their failure is environmental; no ACL or unrelated directory was changed.
+- **PASS (identifier scope):** `Student.enrollment_number` now has a partial unique index on `(college_id, enrollment_number)` for rows with both values non-NULL; the student-creation precheck uses the authenticated selected College. ORM metadata and the unapplied registration draft are aligned. New isolated SQLite tests verify the same enrollment number succeeds in two Colleges while the existing same-College duplicate path remains a conflict. This does not prove PostgreSQL behavior.
+- **NOT CHANGED / DEFERRED (Teacher Employee ID):** `Teacher.employee_id` remains globally unique in ORM metadata and the tenant creation check. It is an existing legacy column, and this repository contains no authoritative historical DDL or deployed catalog evidence establishing the current constraint name/data compatibility needed to remove the global constraint safely. A College-scoped replacement requires schema/data preflight and a separate reviewed migration draft; no such change is made here.
+- **PASS (source/API contract):** The public form uses `POST /college-registration/applications`; the Super Admin service uses `GET /platform/college-applications?status=&q=`, `GET /platform/college-applications/{id}`, `/history`, and review POST routes. These are registered in `backend/app/main.py`; the platform dependency enforces the distinct Super Admin role. Synthetic tests verify persistence and review behavior.
+- **UNKNOWN (previous 503 live cause):** The generic “College application service is unavailable.” is returned when the College Registration handlers catch `SQLAlchemyError`. The application/review persistence is defined in `DRAFT_20261110_add_college_registration_workflow.sql`, still **DRAFT / NOT APPLIED**. A missing/unapplied application table is therefore a supported likely cause, but the exact historical runtime failure cannot be proven without prohibited live database inspection. No schema change was applied.
+- **NOT TESTED:** PostgreSQL migration/parser behavior, runtime database persistence, SMTP/email delivery, browser E2E, and production deployment. No `.env`, database, PostgreSQL service, credential or DPAPI access occurred.
+
+### 2026-11-10 — College registration database blocker follow-up
+
+- **IMPLEMENTED, NOT FULLY TESTED:** Backend database diagnostics now log a safe failure category distinguishing `schema_missing_table`, `schema_missing_column`, `schema_missing_schema`, database connection failure, integrity failure and other database operation failure. Public responses remain sanitized 503; no SQL, exception text, parameters, submitted fields or credentials are logged. Synthetic tests prove missing table and missing column are classified separately.
+- **IMPLEMENTED (draft only):** `DRAFT_20261110_add_college_status_history.sql` no longer has the unnecessary prerequisite on the registration table. It requires the tenant foundation's `users` and `colleges`, so the proposed sequence can create College profile/history schema before enabling the registration approval handler that writes those columns and history rows. The SQL remains **DRAFT / NOT APPLIED**; no PostgreSQL parser or database execution was used.
+- **PASS (focused backend):** From `backend`, dotenv opt-out and explicit synthetic SQLite URL/key, `..\.venv\Scripts\python.exe -m unittest tests.test_college_registration_isolated tests.test_tenant_registration_isolated tests.test_tenant_authorization_negative_paths -q`: **32 passed, 0 failed, 0 errors**.
+- **PASS (frontend serial):** From `frontend`, each sorted `tests/*.test.mjs` file run independently with `node --test --test-concurrency=1 <file>`: **23 files, 111 passed, 0 failed, 0 skipped**. This includes Super Admin loading, empty, and unavailable-state tests. The initial sandboxed run was blocked by Windows `spawn EPERM`; retry outside the process sandbox passed.
+- **PASS (validation-only Vite build):** Vite production build API invoked with `configFile:false`, `envFile:false`, all inherited `VITE_*` variables cleared, `VITE_API_BASE_URL=https://validation-only.invalid/api`, and `build.write:false`; completed successfully without output files. This is validation-only, not deployable.
+- **FAIL / DIAGNOSED (full backend):** With the same safe synthetic variables, `..\.venv\Scripts\python.exe -m unittest discover -s tests -q`: **258 tests, 223 passed, 23 failed, 12 errored**. The unchanged 23 stale legacy-route assertions conflict with default-deny 503 behavior; 10 fixture setup errors duplicate ORM-created tables; two reconciliation tests encounter Windows temp-file permission failures. See the prior dated named-failure audit for each case. No route gate was changed.
+- **PASS:** Python AST checks for changed backend Python files; `git diff --check` and scoped whitespace scan. SQL parsing, PostgreSQL, live database persistence, SMTP and browser rendering remain **NOT TESTED**.
+- **BLOCKED:** Runtime migration state and the historical exact 503 cause remain unknown without a separately authorized database inspection. No migration, database, PostgreSQL, service, credential, `.env`, DPAPI or `backend/create_admin.py` operation occurred.
+
+### 2026-11-10 — Local execution acceptance pass
+
+- **PASS (frontend startup smoke):** Vite was created with `configFile:false`, `envFile:false`, loopback-only host and process-only reserved `.invalid` API configuration. `http://127.0.0.1:5173/` returned HTTP 200; the temporary server was closed after the request. This is not a persistent application session or API integration test.
+- **PASS (Vite validation build):** Ran the production validation build with Vite config and dotenv loading disabled, inherited `VITE_*` variables cleared, `VITE_API_BASE_URL=https://validation-only.invalid/api`, and `build.write:false`. It completed without writing build artifacts.
+- **BLOCKED (backend normal startup):** No backend server was started because normal configuration loading can read the private dotenv file and the configured PostgreSQL target has not been authorized. `/health` source is liveness-only and does not prove database readiness.
+- **PASS / NOT TESTED distinction:** Existing full backend suite remains **258 tests: 223 passed, 23 failed, 12 errored**; focused College registration/tenant suite **32 passed**; serial frontend suite **111 passed across 23 files**. Synthetic SQLite and jsdom/Vite tests do not verify PostgreSQL persistence or browser E2E.
+- **BLOCKED:** Database identity, live migration state, actual application persistence, SMTP, College Admin activation/login, and end-to-end attendance writes remain unverified. The two foundation draft files are alternatives; v2 is not to be applied after v1. No `.env`, database, PostgreSQL, credential, SMTP, or `backend/create_admin.py` access occurred.
+## 2026-11-10 â€” Student/Teacher activation and migration review
+
+- Focused synthetic backend tests: **19 passed, 0 failed** (`test_account_activation_isolated` + `test_tenant_registration_isolated`; dotenv opt-out and explicit in-memory SQLite).
+- Focused auth/application/platform/tenant/migration/OpenAPI run: **75 tests, 74 passed, 1 failed**. The single failure is the existing auth test expecting HTTP 403 from `/admin-dashboard`; the unchanged default-deny gate returns 503 for that blocked route.
+- Full backend suite: **253 tests, 218 passed, 23 failed, 12 errored**. Failures include legacy expectations for routes intentionally held behind default deny (503 versus prior 403/200) and existing test-fixture/setup incompatibilities such as a duplicate `attendance_events` table. No activation or tenant-registration test failed. Exact full command: `..\.venv\Scripts\python.exe -m unittest discover -s tests` with `ATTENDX_SKIP_DOTENV=1`, `ATTENDX_TEST_SQLALCHEMY_URL=sqlite://`, and synthetic `SECRET_KEY` set in the process.
+- Frontend serial suite: **110 passed, 0 failed**, direct Node invocation one test file at a time. Initial sandbox attempts returned Windows `spawn EPERM` for Vite/esbuild worker subprocesses; reruns outside the restricted process sandbox passed. No dependencies were installed.
+- Vite validation build: **PASS**, 1,956 modules transformed; reserved `https://api.validation.invalid`; dotenv disabled; output directed to a unique system-temp directory. Bundle-size warning remains. Validation output is not deployable.
+- Python syntax: pending final AST check. PostgreSQL, live SMTP, browser workflow and migration execution: **NOT TESTED**.
+### Reproduction commands for the 2026-11-10 run
+
+Backend focused command, from `AttendX/backend`:
+
+```powershell
+$env:ATTENDX_SKIP_DOTENV='1'
+$env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'
+$env:SECRET_KEY='synthetic-test-secret-key-value-at-least-32-bytes'
+..\.venv\Scripts\python.exe -m unittest tests.test_account_activation_isolated tests.test_tenant_registration_isolated -v
+```
+
+Full backend command used the same three process-only variables and ran:
+
+```powershell
+..\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+Frontend serial command pattern, from `AttendX/frontend` (the invocation is run once per file, in sorted order, not through Node's worker-spawning test runner):
+
+```powershell
+Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { node $_.FullName }
+```
+
+Vite validation build used the Vite JS API with `configFile: false`, `envFile: false`, the existing React plugin, `VITE_API_BASE_URL=https://api.validation.invalid`, and a unique system-temp `build.outDir`; it transformed 1,956 modules and emitted the >500 kB chunk warning. A temporary helper was removed after the build. The output is validation-only and not deployable.
+
+AST command parsed 10 changed Python files with `ast.parse` and wrote no bytecode. `git diff --check` passed (Git emitted only existing LF/CRLF normalization warnings); scoped whitespace scan covered 27 files and passed.
+
+## College registration temporarily-unavailable investigation (2026-11-10)
+
+- **SOURCE TRACE PASS:** Form `POST /college-registration/applications`, frontend service and registered FastAPI route align; schema fields match the payload; successful backend response is 201 with reference/status/tracking token. See `docs/COLLEGE_REGISTRATION_ERROR_FIX_REPORT.md` for file/line evidence.
+- **LIVE ROOT CAUSE UNKNOWN / BLOCKED:** The UI's exact unavailable text is selected for HTTP 503 or no response. A synthetic missing-registration-table test returns the sanitized backend 503, but no live response, backend log or PostgreSQL schema was inspected. Missing table/column is a possible cause, not confirmed for the user's local database.
+- **PASS (synthetic backend):** `python -m unittest tests.test_college_registration_isolated tests.test_tenant_registration_isolated -v`: 27 passed, 0 failed, 0 errors using explicit in-memory SQLite and dotenv opt-out.
+- **PASS (frontend):** Focused `node --test --test-concurrency=1 tests/public-pages.test.mjs`: 9 passed. Full serial `node --test --test-concurrency=1 tests/*.test.mjs`: 111 passed, 0 failed, 0 skipped. First restricted test attempt failed before assertions with Windows `spawn EPERM`; retry outside the restricted process sandbox passed.
+- **FULL BACKEND SUITE:** `python -m unittest discover -s tests -q`: 258 run; 23 failed, 10 errored, 225 succeeded. Failures primarily reflect legacy route assertions expecting functionality now blocked by default-deny. Errors are fixture setup collisions where manual SQLite `CREATE TABLE` duplicates ORM-created `attendance_events`, `attendance_sessions`, or `student_guardians`. No test gate or assertion was changed.
+- **NOT TESTED:** Actual PostgreSQL identity/schema, HTTP status for the reported request, live persistence, browser submission, and status lookup after backend restart. No frontend source changed, so no production build was run.
+- **NO FIX CLAIM:** No source fix was justified because the live cause cannot be distinguished within the no-database-access boundary. Registration migration state remains unverified; draft filenames are not evidence that it was or was not applied. A separate approval is required for read-only inspection of `127.0.0.1:5432/attendx`; a synthetic live registration write would require its own explicit approval.
+
+## Follow-up: supplied PostgreSQL 42P01 logs and exact inspection gate (2026-11-10)
+
+- **USER-SUPPLIED EVIDENCE:** Logs report one `college_registration_database_unavailable` diagnostic with `ProgrammingError`, SQLSTATE `42P01`, plus 422 and 503 request statuses. This confirms an undefined-table database error occurred in the registration module. The diagnostic excerpt omits relation name and request correlation ID; exact missing relation and endpoint correlation remain UNKNOWN.
+- **SOURCE TRACE:** Registration POST can fail at `public.users` lookup or `public.college_registration_applications` duplicate/insert path. Application-list GET loads authenticated `User` and queries `college_registration_applications`; College-list GET loads `User`, then full `College` and `CollegeRegistrationApplication` ORM rows. Candidate relations and migration dependencies are itemized in `docs/COLLEGE_REGISTRATION_ERROR_FIX_REPORT.md`.
+- **422 SEPARATE:** Source field names match the Pydantic model. The exact 422 validation location/message was not included; do not infer that it caused the separate 503. No request values were inspected.
+- **BLOCKED:** No database connection, schema query, backup, migration, or write occurred. A one-time read-only inspection of `127.0.0.1:5432/attendx` still requires explicit approval, including a safe credential-supply method that does not read `.env`. A test registration write and migration each require separate approval.
+- **NOT RUN THIS FOLLOW-UP:** No tests or SQL parser were run; this was source/migration review and documentation based on user-supplied logs. Existing prior synthetic test results remain as previously reported and are not PostgreSQL verification.
+
+## Authorized read-only database inspection attempt (2026-11-10)
+
+- **APPROVAL:** User explicitly approved identity/catalog inspection of only `127.0.0.1:5432/attendx`; backups, migrations and writes remain unauthorized.
+- **BLOCKED before connection:** Automatic review rejected the proposed command because importing `backend/app/database.py` to obtain the runtime URL may load `.env` and access credentials. No workaround was attempted.
+- **NOT TESTED:** PostgreSQL identity/version, schema/search_path, actual relation existence, columns, constraints, indexes and migration ledger. `psql` and `pg_isready` were not found on PATH.
+- **SOURCE REVIEW:** Candidate relations are `public.users` and `public.college_registration_applications` for registration/application listing, plus `public.colleges` for the College directory. The SQLSTATE `42P01` log lacks relation name/request correlation; exact missing relation remains UNKNOWN. Full endpoint mapping and migration prerequisites are in `docs/ATTENDX_READ_ONLY_DATABASE_INSPECTION.md`.
+- **NO DATABASE OPERATION:** No connection, SQL statement, backup, migration, registration request, or data modification occurred. Continue only after an approved safe credential-supply method that does not access `.env` or expose credentials.
+
+## 2026-11-10 — College registration migration correction (source-only)
+
+- **PASS:** Corrected the foundation v2 draft to include `uq_college_memberships_id_user_college UNIQUE (id, user_id, college_id)`, matching `CollegeMembership` metadata and the composite `AccountInvitation` foreign key.
+- **PASS:** Updated the account activation draft to preflight the exact named unique key and column order rather than attempting to add a duplicate constraint.
+- **PASS:** Hardened status-history migration preflight to reject incompatible pre-existing College profile columns before `ADD COLUMN IF NOT EXISTS`.
+- **PASS:** Static migration contract suite: 9 tests passed. Exact command from `backend`: `..\\.venv\\Scripts\\python.exe -m unittest tests.test_tenant_migration_static -v` with process-only `ATTENDX_SKIP_DOTENV=1`, explicit `ATTENDX_TEST_SQLALCHEMY_URL=sqlite://`, and a synthetic test `SECRET_KEY`.
+- **BLOCKED (environmental):** Attempted focused API/registration tests could not import `starlette.testclient.TestClient`; the installed Starlette requires the unavailable `httpx2` package. No dependency was installed. No assertion failures ran in that command.
+- **NOT TESTED:** PostgreSQL parser/execution, live schema/migration state, actual registration persistence, Super Admin listing on PostgreSQL, and browser flow. The exact live relation behind the prior 42P01 and exact cause of the separate 422 remain UNKNOWN.
+- Migration plan: `docs/COLLEGE_REGISTRATION_MIGRATION_PLAN.md`. All migrations remain DRAFT / NOT APPLIED; a verified isolated target, backup/restore rehearsal, and separate explicit execution approval remain required.
+
+## 2026-11-11 — Registration 42P01 stage diagnostics
+
+- Source order in `submit_college_application`: `users.id` lookup, duplicate query on `college_registration_applications.id`, insert during commit, then refresh. Thus `public.users` is the first relation the request touches. If that succeeds, the application relation is next. Existing logs contain no stage or relation name, so the exact missing relation remains **UNKNOWN**.
+- Registration logs now include fixed stage labels and sanitized structured schema/table metadata if the PostgreSQL driver supplies it. They never parse a relation from the exception message or log SQL/parameters/application values. PostgreSQL object-name diagnostics are optional and documentation notes their limited error coverage; absence remains `unknown`.
+- **PASS:** Diagnostic unit tests plus migration static contract tests: `12 passed`. Synthetic metadata only; no database connection.
+- **BLOCKED:** Fresh catalog inspection could not be done without a safe credential-supply method that avoids `.env` and credential-file access. No connection was attempted.
+- Exact owner-side metadata still required: database identity/search path, expected relation presence across schemas, `users.id` definition, relevant table columns/constraints/indexes/FKs, and migration history.
+- Migration drafts remain **DRAFT / NOT APPLIED**. PostgreSQL persistence remains **NOT TESTED**.
+
+## 2026-11-11 � Urgent registration 503 follow-up
+
+- **UNKNOWN:** The exact missing PostgreSQL relation and failing stage are not proven. Source order is users lookup ? duplicate-application lookup ? INSERT/commit ? refresh; stage labels were added for the next run. Existing log excerpt contains no stage/table metadata.
+- **BLOCKED:** No safe credential path for a read-only connection was available without `.env` or credential access. Manual identity/schema-only `psql` commands are documented in `docs/COLLEGE_REGISTRATION_MIGRATION_PLAN.md`.
+- **PASS:** Backend synthetic diagnostic + migration static tests: 12 passed. Python AST: 3 files passed.
+- **BLOCKED (environment):** Backend API integration tests stopped at import because `httpx2` is unavailable to Starlette TestClient. No dependency installed.
+- **PASS:** Frontend public-page serial retry outside restricted process sandbox: 9 passed. Initial `spawn EPERM` errors occurred before assertions; retry passed.
+- PostgreSQL persistence and pending-list verification: **NOT TESTED**. Migration drafts remain **DRAFT / NOT APPLIED**.
+
+## Permanent College Admin-set Student/Teacher passwords ? 2026-11-11
+
+- **PASS (synthetic backend):** `cd backend; $env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-a-real-secret'; ..\.venv\Scripts\python.exe -m pytest tests\test_tenant_admin_set_password.py tests\test_tenant_registration_isolated.py tests\test_account_activation_isolated.py tests\test_tenant_phase14a18_readiness.py -q -p no:cacheprovider` ? **33 passed, 0 failed, 10 subtests passed**. Coverage includes Student and Teacher account creation, hash verification, immediate login with the admin-set password, password mismatch/policy rejection, response redaction, College-scoped reset authorization, reset audit metadata, and legacy pending invitation behavior.
+- **PASS (focused frontend):** with `VITE_API_BASE_URL=https://api.attendx.invalid`, ran `node tests\tenant-students.test.mjs` then `node tests\tenant-teachers.test.mjs` serially ? **10 passed, 0 failed**. This verifies form/service wiring and explicit College propagation; it is not browser-rendered coverage.
+- **PARTIAL FAIL (full frontend sweep):** all 24 frontend test files were run one at a time (serially), totaling **113 tests: 89 passed, 24 failed**. **23** component/import test failures were Windows `spawn EPERM` from Vite/esbuild child-process startup. The remaining failure is `api-base-url.test.mjs` inspecting the existing `frontend/dist` artifact and flagging the development loopback string; no build was run in this phase and that artifact finding was not changed here.
+- **NOT TESTED:** PostgreSQL compatibility or persistence, migrations, SMTP, browser UI, and production login. The synthetic SQLite run is not PostgreSQL proof. Registration remains dependent on the unapplied schema being present.
+- **POLICY:** New Student/Teacher accounts are active after the College Admin's permanent password is hashed and the account/profile/membership transaction commits. New registrations do not create invitations or impose first-login password changes. Existing already-pending invitation records retain their one-time activation path. Authorized, College-scoped password resets are audited without recording the password.
+- No PostgreSQL/database, `.env`, credential, DPAPI, service, cluster, port, or `backend/create_admin.py` operation occurred. Tenant/account migrations remain **DRAFT / NOT APPLIED**; production readiness is not claimed.
+
+
+## Password policy verification continuation — 2026-11-11
+
+**Implemented behavior:** The active College Admin routes use `TenantStudents.jsx` and `Teachers.jsx`. Both collect a permanent password and confirmation, validate the shared policy, submit only to the tenant-scoped create APIs, and display the requested success message only after the API succeeds. The backend hashes with the existing password helper, creates the account/profile/active membership in one transaction, and returns response models that omit hashes. Existing login continues to verify the same stored hash. No mandatory first-login change or temporary password is applied to newly created accounts. Existing pending invitation records retain their prior activation flow. Authorized resets remain College-scoped and record password-free audit metadata.
+
+**Regression coverage added:** A synthetic SQLite test now verifies that non-admin membership cannot reset a Teacher password and that a College Admin cannot target a Teacher in another College; both denials leave the target hash unchanged.
+
+**PASS — focused backend:** Command, from `backend`:
+```powershell
+$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-a-real-secret'; ..\.venv\Scripts\python.exe -m pytest tests\test_tenant_teacher_management.py tests\test_tenant_admin_set_password.py tests\test_tenant_student_management.py -q -p no:cacheprovider
+```
+Result: **16 passed, 0 failed, 2 subtests passed**. One existing pytest/AnyIO deprecation warning. This synthetic SQLite result does not establish PostgreSQL behavior.
+
+**PASS — focused frontend:** With `VITE_API_BASE_URL=https://api.attendx.invalid`, `node tests\tenant-teachers.test.mjs` reported **4 passed** and `node tests\tenant-students.test.mjs` reported **6 passed**.
+
+**LIMITED — full frontend serial sweep:** The Node test-runner command `node --test --test-concurrency=1 tests/*.test.mjs` failed to spawn child test processes (Windows `spawn EPERM`). Retrying each of 24 files serially with `node <file>` ran **113 tests: 89 passed, 24 failed, 0 skipped**. Of the failures, **23 were spawn EPERM** in tests requiring worker/server processes; one existing artifact audit failed because the pre-existing `dist` output contains the production loopback fallback marker. No existing `dist` output was overwritten.
+
+**BLOCKED — production build:** `npm run build -- --outDir dist-password-policy-validation-20261111 --emptyOutDir` failed before module transformation with Windows `spawn EPERM`. The unique validation output directory was not created.
+
+**PASS — source checks:** Python AST parsing passed for six relevant Python files. `git diff --check` reported no whitespace errors; Git emitted existing LF/CRLF conversion warnings.
+
+**NOT TESTED:** Live PostgreSQL persistence/login, browser UI, migrations and production deployment. The tenant migration remains **DRAFT / NOT APPLIED**; credential rotation A–E remains **BLOCKED / NOT APPROVED**. No production-readiness claim is made.
+
+
+## College Admin workspace and attendance continuation - 2026-11-11
+
+- **EXECUTED (local configured PostgreSQL):** Pre-migration custom-format backup `D:\AttendX\PostgreSQL-Test\backups\phase14a-protected\attendx_pre_tenant_repair_20261111T151458Z.dump`, 3,751,803 bytes, SHA-256 `99101E2C71F76A32E3FE6BE8329F544815BE44CD87429A60B7B1FF1197F354B1`; `pg_restore --list` verified 208 archive entries.
+- **EXECUTED:** Six additive SQL migrations listed in `docs/COLLEGE_ADMIN_WORKSPACE_REPAIR_20261111.md` applied after identity, schema, ownership, and backup checks. No destructive DDL or data reassignment. Row counts remained unchanged; all legacy ownership remains NULL/UNKNOWN. The migration files remain source drafts where named DRAFT; their execution is documented factually here.
+- **PASS:** Focused backend synthetic SQLite suites: 56 passed. This is not PostgreSQL proof. Focused frontend serial tests: 15 passed.
+- **PARTIAL FAIL (environment):** Full frontend serial sweep: 124 total, 100 passed, 24 failed, 0 skipped; all 24 failures were Windows `spawn EPERM` before test assertions in five files.
+- **BLOCKED (environment):** Safe Vite validation build failed before transform with `spawn EPERM` in Windows path resolution. Existing build output was not overwritten.
+- **PASS (limited live query):** Direct handler query checks against the configured local PostgreSQL verified dashboard/list query execution. These bypass HTTP/JWT middleware and are not browser/login or write-flow tests.
+- Browser E2E, PostgreSQL account login/registration, physical QR/face capture, SMTP, and production deployment: **NOT TESTED**. Legacy business ownership remains UNKNOWN and excluded. Credential rotation A-E remains **BLOCKED / NOT APPROVED**; production API endpoint UNKNOWN; production readiness NOT CLAIMED.
+- Details and limitations: `docs/COLLEGE_ADMIN_WORKSPACE_REPAIR_20261111.md`.
+
+
+## Continuation checkpoint ? Teacher dashboard and camera lifecycle (2026-11-11)
+
+This section supersedes older progress notes in this file where they say the tenant attendance session or dashboard work is still next. It records code/test work, not overall completion.
+
+Implemented in the current working tree:
+
+- Added `GET /tenant/attendance/sessions/summary`, scoped to the authenticated Teacher, active College membership, own Teacher profile, same-College assignments/sessions, and verified attendance events. An empty denominator returns `null` for the rate; unavailable sources are not represented as successful zero metrics.
+- Migrated the Teacher Dashboard to tenant summary, assignment, and session services. It passes AuthContext's selected College, clears data on College switches, and ignores stale async responses.
+- Added backend isolation tests for the summary and a synthetic Teacher QR-to-Student attendance flow, including duplicate rejection, foreign-College denial, and Student history visibility.
+- Added frontend contract tests for explicit College propagation and avoidance of default-denied dashboard APIs.
+- Hardened Student Dashboard camera acquisition against a request resolving after unmount/cancellation: late streams are stopped before attachment or processing; successful streams retain normal cleanup. Added source-level lifecycle regression assertions. These are not mounted React component tests.
+- Added synthetic blank-frame and vector-path runtime checks against the installed face engine/models. This does not verify a real person's enrollment or recognition.
+
+Validation (2026-11-11):
+
+- Backend tenant/migration/password batch: **58 passed, 0 failed**. Command from `backend`:
+  `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; .\.venv\Scripts\python.exe -m unittest tests.test_tenant_attendance_sessions_isolated tests.test_tenant_ownership_migration_static tests.test_tenant_class_management tests.test_tenant_subject_management tests.test_tenant_student_management tests.test_tenant_teacher_management tests.test_tenant_ownership_isolated tests.test_tenant_user_schema_fixture tests.test_tenant_migration_static tests.test_tenant_admin_set_password -v`
+- Face engine runtime suite: **2 passed, 0 failed**, with synthetic input only, using the same environment and `python -m unittest tests.test_face_engine_runtime_isolated -v`. OpenCV emitted non-fatal backend target warnings.
+- Additional isolated service/GIS tests: **7 passed** (`test_college_registration_service`: 3; `test_gis_geofence_isolated`: 4). Fourteen other HTTP API modules could not import because the installed environment lacks `httpx2`; `test_tenant_face_isolated` could not import because `httpx` is absent. No dependency was installed.
+- Frontend serial per-file sweep: **27 files, 127 cases: 103 passed, 24 failed, 0 skipped**. Every failed case failed before assertions because five files required process creation and Windows returned `spawn EPERM`; **0 assertion failures**. Invocation: PowerShell enumerated `Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name` and ran `node $f.FullName` sequentially for each file.
+- Safe Vite validation build used an empty temporary `envDir` and `https://api.attendx.invalid`; it failed at `commonjs--resolver` with `spawn EPERM` after 0 modules transformed. It is an environment failure, not a source assertion; no deployable build was produced.
+- Python AST check: **125 files parsed** under `backend/app`, `backend/tests`, and `backend/scripts`; `backend/create_admin.py` was explicitly excluded.
+- `git diff --check`: **PASS** (Git printed existing LF/CRLF conversion warnings).
+
+Remaining mandatory acceptance blockers:
+
+- No real PostgreSQL end-to-end application workflow was executed in this continuation; SQLite tests do not establish PostgreSQL behavior.
+- Browser UI tests remain **NOT TESTED** because the Windows process restriction prevents worker-dependent tests; no browser was launched.
+- Actual camera capture, QR scan from a physical display, face enrollment/matching with real users, and biometric liveness remain **NOT TESTED**.
+- College registration persistence, Super Admin approval, all four role logins, and identical persistent attendance visibility across all dashboards are not established as one PostgreSQL-backed end-to-end run.
+- API-level tests needing `httpx2`/`httpx` remain blocked by missing installed test dependencies; dependencies were not installed.
+- Email delivery/provider, production API endpoint, and deployment configuration remain **UNKNOWN / NOT TESTED**.
+
+Current status: six reviewed additive PostgreSQL migrations were applied earlier under the prior authorization, as documented in `docs/COLLEGE_ADMIN_WORKSPACE_REPAIR_20261111.md`; no migration/database operation occurred in this continuation. Credential rotation A?E remains **BLOCKED / NOT APPROVED**. Production readiness is **NOT CLAIMED**. The full mandatory end-to-end workflow is not complete, so no 100% completion claim is made.
+
+
+## Continuation ? test environment blocker investigation (2026-11-11)
+
+- Inspected recent Git history (last five commits) and current worktree; all source/test/report changes remain uncommitted or untracked and preserved. No Git cleanup or reset was used.
+- Confirmed Starlette's installed TestClient implementation imports `httpx2` first, falls back to `httpx`, and raises when both are missing. `backend/requirements.txt` has runtime dependencies only. Added `backend/requirements-test.txt` (`-r requirements.txt`, `httpx2`) and updated `test_tenant_face_isolated.py` to prefer `httpx2` with an `httpx` compatibility fallback. Nothing was installed. API test suites remain blocked until an authorized environment installs the test requirements.
+- Vite 7's Windows realpath optimization runs optional `exec("net use")`; this environment denies it. Added a test-only Vite helper that intercepts only this optional command and returns an error so Vite can use its local-path fallback. The tests then reached Vite's required esbuild service, whose child-process creation is also denied. The helper does not change application/runtime Vite configuration or assertions.
+- Re-ran the entire frontend suite serially after the helper change: **27 files, 127 cases, 103 passed, 24 failed, 0 skipped**. The same 24 cases fail before assertions with `spawn EPERM` from esbuild in five files; assertion failures remain **0**.
+- Retried the validation-only Vite build with the optional `net use` probe intercepted, empty temporary envDir, and `https://api.attendx.invalid`. It remains **BLOCKED**: `vite:build-html` receives `spawn EPERM` before modules transform. No deployable output was produced.
+
+No database, PostgreSQL, migration, credential, DPAPI, `.env`, or service operation was performed in this continuation.
+
+## Student registration duplicate-error continuation (2026-11-11)
+
+- **PASS:** Synthetic backend focused suite: 26 passed, 0 failed. Command: `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; .\.venv\Scripts\python.exe -m unittest tests.test_tenant_student_registration_conflicts tests.test_tenant_student_management tests.test_tenant_admin_set_password tests.test_college_identifier_scope -v` (run from `backend`).
+- **PASS:** Frontend Node tests: `node tests\student-registration-errors.test.mjs` (4 passed) and `node tests\tenant-students.test.mjs` (6 passed), from `frontend`.
+- **PASS:** Python AST parsing for the changed backend API, service and new test module. `git diff --check` passed; existing line-ending conversion warnings were emitted.
+- **NOT TESTED:** Live PostgreSQL/API/browser behavior and true concurrent multi-connection races. SQLite-injected constraint conflicts exercise rollback and safe error mapping, not PostgreSQL concurrency.
+- **UNKNOWN:** Exact live record and field behind the reported 409. Source identifies the previous generic pre-check as the emitter, but no payload/catalog evidence was supplied for the data-dependent match. `Student` has no `user_id` relationship, so existing account-to-Student linkage cannot be inferred. Repeated submission safely conflicts rather than creating duplicates; response replay idempotency is not implemented.
+- Details: `docs/STUDENT_REGISTRATION_DUPLICATE_FIX_2026-11-11.md`.
+
+
+## 2026-11-12 continuation - Student invitation and face status
+
+- Backend focused command (from `backend`): `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_student_management tests.test_tenant_face_isolated tests.test_tenant_dashboard_isolated tests.test_account_activation_isolated -q` - **PASS: 38 passed, 0 failed**. Synthetic SQLite only; not PostgreSQL compatibility proof. Existing Starlette/httpx and Python sqlite adapter deprecation warnings were emitted.
+- Frontend serial commands (from `frontend`): `node tests\tenant-students.test.mjs` (**6 passed**); `node tests\student-registration-errors.test.mjs` (**5 passed**); `node tests\tenant-dashboard.test.mjs` (**5 passed**) - **PASS: 16 passed, 0 failed**.
+- **NOT TESTED:** Browser UI, live invitation/database state for Student 26, PostgreSQL, real-person biometric flow, migrations, SMTP, and production build in this continuation. Earlier build and worker failures remain as documented above.
+- A prior test false positive that searched the substring `name` in a payload containing `college_name` was corrected to compare exact nested response keys; the privacy assertion remains.
+
+
+## 2026-11-12 face dashboard and full frontend sweep addendum
+
+- Tenant Admin dashboard face counts are now part of the strict tenant summary contract. Counts require a valid embedding and exclude other Colleges/NULL ownership. Pending/failed statuses are not currently persisted.
+- Backend: **38 passed, 0 failed** using the synthetic SQLite command in the checkpoint above.
+- Focused frontend: **28 passed, 0 failed** over `tenant-students.test.mjs` (6), `student-registration-errors.test.mjs` (5), `tenant-dashboard.test.mjs` (5), and `camera-registration.test.mjs` (12).
+- Full frontend serial-per-file sweep: **28 files / 132 tests: 108 passed, 24 environment failures, 0 assertion failures**. The 24 failures all report `spawn EPERM` before assertions. `node --test --test-concurrency=1 tests/*.test.mjs` also fails at runner process spawning.
+- **PASS:** Python AST (9 relevant backend files), Babel JSX parse (2 modified React pages), and `git diff --check` (existing line-ending warnings only).
+- **NOT RUN:** Vite production build in this continuation. Previous safe build attempt was blocked by Windows `spawn EPERM` before module transform.
+
+
+## Student activation/deactivation repair - 2026-11-12
+
+- Backend synthetic SQLite command (from `backend`): `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_student_management tests.test_tenant_face_isolated tests.test_tenant_dashboard_isolated tests.test_account_activation_isolated -q` - **41 passed, 0 failed**. This does not validate PostgreSQL.
+- Frontend focused serial commands (from `frontend`): `node tests\tenant-students.test.mjs` (6), `node tests\student-registration-errors.test.mjs` (5), `node tests\tenant-dashboard.test.mjs` (5), `node tests\camera-registration.test.mjs` (12) - **28 passed, 0 failed**.
+- Full frontend serial-per-file sweep - **28 files, 132 cases: 108 passed, 24 environment failures, 0 assertion failures**. The 24 failures in five worker-dependent files stop on Windows `spawn EPERM`.
+- **PASS:** Python AST (9 relevant Python files), Babel JSX parser (2 React pages), `git diff --check`, and scoped whitespace scan. Existing line-ending warnings only. **NOT TESTED:** Vite build and browser UI.
+- No live record query, database, PostgreSQL, or migration operation was performed.
+
+
+## Student activation route - final test count addendum (2026-11-12)
+
+This addendum supersedes the earlier activation test counts above. The actual ASGI route `PATCH /students/{student_id}/activate` was exercised using synthetic SQLite; the follow-up tenant list confirmed the persisted active state. Backend: **53 passed, 0 failed**. Focused frontend: **29 passed, 0 failed**. Full frontend serial per-file: **133 tests, 109 passed, 24 environment failures, 0 assertion failures**; all 24 are `spawn EPERM` before assertions in five worker-dependent files. JSX parsing, AST parsing, `git diff --check`, and scoped whitespace scan passed. PostgreSQL, browser, and production build were not tested in this task.
+
+
+## 2026-11-12 Teacher assignment/dashboard sync
+
+- Backend command from `backend`: `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_teacher_management tests.test_tenant_attendance_sessions_isolated -v` - **PASS: 11 passed, 0 failed**. Synthetic SQLite only.
+- Frontend serial commands from `frontend`: `node tests\tenant-attendance.test.mjs` (**5 passed**) and `node tests\tenant-teacher-dashboard.test.mjs` (**2 passed**) - **PASS: 7 passed, 0 failed**.
+- Student lifecycle regression recheck: backend `tests.test_tenant_student_management tests.test_account_activation_isolated` - **25 passed, 0 failed**; `node tests\tenant-students.test.mjs` - **6 passed, 0 failed**.
+- **PASS:** Python AST (3 files), Babel JSX parse (2 files), `git diff --check`, scoped whitespace. **NOT RUN:** Vite build and browser verification. PostgreSQL is **NOT TESTED**.
+- Root cause evidence: backend Admin assignment creation and Teacher assignment retrieval use the same committed `TeacherAssignment` key and tenant filters; source review did not confirm a backend model mismatch. The concrete frontend mismatch was Subject-first selection/filtering despite the requested Class-first workflow. Teacher Dashboard now also refreshes on focus/return and retains visible-tab polling.
+
+
+## 2026-11-12 - Teacher Attendance / workspace integration update
+
+Status labels: PASS means the stated isolated code/test check passed; BLOCKED means the environment prevented validation; NOT TESTED means no such validation was run.
+
+- PASS - Backend command (PowerShell, from `backend`): `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='Synthetic-only-test-key-2026-not-for-any-account'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_teacher_management tests.test_tenant_attendance_sessions_isolated tests.test_tenant_dashboard_isolated tests.test_tenant_class_management tests.test_tenant_classes_api_isolated tests.test_tenant_subjects_api_isolated tests.test_tenant_students_api_isolated tests.test_tenant_authorization_negative_paths -q` - 62 tests, OK. Synthetic SQLite only; not PostgreSQL compatibility proof.
+- PASS - Frontend serial command (PowerShell loop from `frontend`): `node tests/tenant-attendance.test.mjs`; `node tests/tenant-teacher-dashboard.test.mjs`; `node tests/tenant-teachers.test.mjs`; `node tests/tenant-classes.test.mjs`; `node tests/tenant-dashboard.test.mjs`; `node tests/tenant-students.test.mjs` - 27 tests passed, 0 failed.
+- PASS - Python AST check: 4 changed Python files parsed without importing the application or loading environment files.
+- PASS - JSX parser: TeacherAttendance.jsx parsed successfully.
+- PASS - `git diff --check` and scoped byte-level trailing-whitespace scan.
+- BLOCKED - Validation-only Vite build: `VITE_API_BASE_URL=https://attendx-validation.invalid`, `envFile: false`, `configFile: false`; failed before transforming modules with Windows `spawn EPERM` from Vite's `commonjs--resolver` / `optimizeSafeRealPathSync`. No assertion failure. Build is not deployable.
+- BLOCKED - Actual component mount test was attempted with existing React/jsdom dependencies but Vite/esbuild could not spawn its child process (`spawn EPERM`); no component-level Teacher Attendance test is claimed. The retained regression test uses Babel AST scope resolution to catch the unbound `classItem` reference.
+- NOT TESTED - Browser rendering, live PostgreSQL, real registration/assignment/session workflows, QR scans, GPS validation against actual devices, and live College Admin/Teacher accounts.
+- Earlier backend run in this phase exposed two stale test assumptions (Teacher rather than College Admin used for Class writes; Student activation expected the old three-key payload). Fixture/assertion corrections were made without weakening authorization or response-field safety checks; final focused rerun is the 62-test PASS above.
+
+## Final continuation verification - 2026-11-12
+
+- PASS - Full backend unit suite, synthetic SQLite only: 340 passed, 0 failed. Command from backend: $env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-for-real-authentication'; ..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -q.
+- PASS - Tenant QR concurrency case: 1 passed. It uses two independent SQLite connections and verifies concurrent duplicate submission yields one success, one 409, and one persisted event. This is not PostgreSQL concurrency validation.
+- PASS - Full frontend serial suite: 137 passed, 0 failed, 0 skipped, command from frontend: $env:ATTENDX_FRONTEND_ARTIFACT_DIR='.phase-final-validation-build-20261112'; $files=Get-ChildItem tests -Filter '*.test.mjs' | Sort-Object Name | ForEach-Object { 'tests/' + $_.Name }; node --test --test-concurrency=1 @files. First sandbox attempt failed before assertions with Windows spawn EPERM; approved retry passed.
+- PASS - Validation-only Vite build: npm run build -- --config .phase-final-validation-config-20261112.mjs, reserved .invalid API URL, temporary empty envDir/output directory. 1,958 modules transformed; build succeeded with non-fatal module directive and chunk-size warnings. Existing frontend/dist unchanged; output is not deployable.
+- PASS - Python AST check and git diff --check. Scoped whitespace scan performed on the continuation test and updated reports.
+- NOT TESTED - PostgreSQL, browser end-to-end, registration persistence, role logins against PostgreSQL, live assignment/session/attendance durability, device QR/GPS operation, and real biometric recognition.
+- BLOCKED - Credential rotation A-E remains BLOCKED / NOT APPROVED. Production API endpoint remains UNKNOWN. No database or migration operation was performed; tenant migration remains DRAFT / NOT APPLIED.
+
+## Teacher registration 404 fix - 2026-11-12
+
+- PASS - Focused backend tenant Teacher API/management suites: 15 passed, 0 failed, using synthetic SQLite and dotenv opt-out. Exact command from backend: $env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-for-real-authentication'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_teachers_api_isolated tests.test_tenant_teacher_management -v. Coverage includes registration without assignments, active same-College assignment persistence, and sanitized rejection of inactive/foreign references without partial Teacher/User creation.
+- PASS - Focused frontend Tenant Teacher suite: 5 passed, 0 failed. Command from frontend: node --test tests/tenant-teachers.test.mjs. Initial sandbox attempt failed before assertions with Windows spawn EPERM; retry with approved process-spawn permission passed.
+- PASS - Validation-only frontend build: npm run build -- --config .phase-teacher-404-config-20261112.mjs; empty temporary Vite envDir, reserved https://attendx-validation.invalid API URL, temporary output outside frontend/dist; 1,959 modules transformed. Existing frontend/dist was not overwritten. Non-fatal module-directive and chunk-size warnings.
+- PASS - Python AST and git diff --check; scoped trailing-whitespace scan performed.
+- UNKNOWN / NOT TESTED - The actual live College 5 Class/Subject condition and browser registration were not verified. The reported route response is produced after the request reaches assignment validation; source cannot determine whether the specific selected row was missing, inactive, foreign-owned, or stale.
+- NO DATABASE, PostgreSQL, migration, credential, .env, or service operation was performed.
+
+## Teacher registration 404 follow-up - 2026-11-12
+
+- PASS - Backend focused suites: 15 passed, 0 failed, synthetic SQLite, dotenv disabled. Command from backend: $env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-for-real-authentication'; ..\.venv\Scripts\python.exe -m unittest tests.test_tenant_teachers_api_isolated tests.test_tenant_teacher_management -q. Covers GET /teachers/, registration with and without assignments, Teacher login, Teacher Dashboard assignment retrieval, duplicate conflicts, inactive/foreign assignment references, and no partial records on failure.
+- PASS - Frontend focused Tenant Teacher suite: 5 passed, 0 failed. Command: node --test tests/tenant-teachers.test.mjs. Sandbox attempt failed before test loading with spawn EPERM; process-spawn retry passed.
+- PASS - Full backend suite: 340 tests passed, 0 failed, synthetic SQLite with dotenv disabled. Command: ..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -q. This run preceded the final additional assertions in the focused Teacher API test; those added assertions pass in the 15-test focused rerun.
+- PASS - Validation-only Vite build: npm run build -- --config .phase-teacher-404-config-20261112.mjs; 1,959 modules transformed. Used reserved .invalid API URL and unique temporary output outside frontend/dist. Non-fatal module-directive and chunk-size warnings.
+- PASS - Python AST, git diff --check, scoped whitespace check.
+- NOT TESTED - Live College 5 database rows, active backend process identity, browser behavior, PostgreSQL registration or account/dashboard flow. Current source registers GET /teachers/ and synthetic tests return expected responses. Exact record condition behind the user's 404 remains UNKNOWN.
+- Test correction: the earlier new SQLite QR concurrency test was removed after repeat runs exposed SQLite lock and Windows temporary-directory permission errors. It was not reliable PostgreSQL concurrency evidence; sequential duplicate behavior remains covered.
+## Master implementation continuation - 2026-11-12
+
+- PASS: Backend full suite: 341 passed, 0 failed, using synthetic SQLite and dotenv opt-out. From `backend`: `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite://'; $env:SECRET_KEY='synthetic-test-key-only-not-for-real-authentication'; ..\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -q`.
+- PASS: Focused frontend tests run directly and serially: `node tests/tenant-teachers.test.mjs` (5), `node tests/tenant-teacher-dashboard.test.mjs` (2), `node tests/tenant-face.test.mjs` (1), `node tests/tenant-attendance.test.mjs` (6), `node tests/student-dashboard.test.mjs` (4); 18 passed, 0 failed.
+- PARTIAL: Full frontend serial-per-file sweep: 28 files, 138 cases: 113 passed, 25 failed, 0 skipped. Five files had 24 tests fail before assertions due to Windows `spawn EPERM` from Vite/esbuild. The other assertion failure is in `api-base-url.test.mjs`: an existing generated artifact under `frontend/dist` contains the development loopback URL `http://127.0.0.1:8000`. The existing artifact was not changed; it may be stale. No fresh build was run.
+- PASS (source contract): `GET /teachers/` is registered by the tenant router before the default-denied legacy router; the frontend client uses the same route and passes selected `college_id`. The specific live-process 404 remains UNKNOWN because the server process/API was not inspected.
+- PASS (synthetic): Added ASGI route regression covering active-session visibility, Teacher QR issuance, Student QR submission, duplicate rejection, Student history, Teacher live roster and foreign-College non-disclosure.
+- PASS: Python AST, `git diff --check`, and scoped trailing-whitespace scan.
+- NOT TESTED: Browser UI, live API, PostgreSQL, fresh frontend build, genuine camera/face recognition, and production deployment. No database, migration, credential, `.env`, service, or `frontend/dist` operation occurred.
+
+
+## Teacher registration continuation - 2026-11-12
+
+- PASS: Backend full suite 342 passed, 0 failed with dotenv disabled and synthetic SQLite. Focused `tests.test_tenant_teachers_api_isolated tests.test_tenant_teacher_management` passed 16/16.
+- PASS: Frontend full serial-per-file sweep: 28 files, 139 cases; 114 passed, 25 failed, 0 skipped. Five component-heavy files had 24 tests fail before assertions due Windows `spawn EPERM` from Vite/esbuild. The remaining one assertion failure is the API base URL artifact audit detecting the development loopback URL in existing `frontend/dist`; it was not modified. Focused `tenant-teachers.test.mjs` passed 6/6.
+- Confirmed source condition: teacher creation with assignments fails closed with HTTP 503 if the `teacher_assignments` effective-date columns are absent; the relationship-effective-date migration remains DRAFT / NOT APPLIED. A synthetic legacy-schema test confirms no partial User/Teacher persistence. The actual configured schema and the current live report are UNKNOWN.
+- Fixed assignment-row handling: partial rows and duplicate tuples now fail locally with a useful validation message, empty optional rows are skipped, and a request lock prevents duplicate submissions. Positive numeric IDs and semester/year bounds are checked client-side; the server remains authoritative for active same-College records.
+- No separate Subject-Class mapping model exists in the inspected ORM; `TeacherAssignment` is the persisted Class/Subject/Teacher tuple. No schema or authorization change was made.
+- PASS: Python AST, Teacher JSX parse, helper syntax check, `git diff --check`, and scoped whitespace scan.
+- NOT TESTED: Browser, live API, PostgreSQL, new production build, genuine camera/face recognition. No database, migration, credential, `.env`, service, dependency, or `frontend/dist` operation occurred.
+
+Test-authoring correction: the first focused run of the new legacy-schema case had four NameError errors because its method was initially placed inside the preceding test. The test was moved to its own method; the focused 16-test rerun and subsequent full 342-test run passed.
+
+## Latest validation update (2026-11-15)
+
+Coursework follow-up results: focused backend 46 passed; OpenAPI readiness 6 passed and 1 skipped; focused Coursework frontend 13 passed. Full backend discovery: 242 tests, 30 TestClient import errors (`httpx2` unavailable), 2 skipped, no assertion failures. Full frontend serial suite: 203 tests, 178 passed, 25 failed (24 `spawn EPERM`; 1 existing `frontend/dist` loopback artifact finding). Temporary Vite validation build stopped with `spawn EPERM`; existing dist was untouched. Details: [Phase 15 Coursework Follow-up](PHASE_15_COURSEWORK_FOLLOWUP_2026-11-15.md).
+
+## Phase 16 local Coursework migration and integration update - 2026-11-15
+
+- PASS: Fresh local PostgreSQL 18.6 custom-format backup verified before migration; exact path and SHA-256 are recorded in [Phase 16 Coursework Live Schema Migration](PHASE_16_COURSEWORK_LIVE_SCHEMA_MIGRATION.md).
+- PASS: Eight reviewed SQL drafts applied individually to local `attendx` after per-command target identity checks. ORM/catalog comparison passed; seven new relations and expected constraints, indexes, and triggers exist. The 29 pre-existing NOT VALID FKs were not changed or validated.
+- PASS: Tenant Coursework and account-link routers registered after schema verification; runtime OpenAPI exposes 17 Coursework and 4 account-link operations. Legacy `/assignments` remains default-denied.
+- PASS: Focused backend suites: 65 total, 64 passed, 1 skipped. Focused Coursework frontend suites: 19/19 passed.
+- FAIL / BLOCKED: Full frontend serial suite remains 178/203 passed, 25 failed (24 Windows `spawn EPERM`; 1 existing `frontend/dist` loopback artifact finding). Temporary Vite validation build hit `spawn EPERM`; no `frontend/dist` write occurred.
+- BLOCKED: Existing database has no verified Student/Teacher account-link rows. No live assignment or submission was created; authenticated PostgreSQL workflow is NOT TESTED. Browser is NOT TESTED because browser access was unavailable.
+- Migration ledger is absent. The local execution record is documented in Phase 16; all SQL files retain draft headers. Production readiness is NOT CLAIMED.
+- Follow-up frontend error handling: HTTP 503 now reports a temporary Coursework service outage and does not incorrectly claim the schema/API is awaiting deployment. Focused/full serial frontend tests after this change retained the same full-suite result: 203 total, 178 pass, 25 fail (24 EPERM, 1 existing artifact audit).
+## Phase 16 follow-up validation - 2026-11-15
+
+- Backend command (from `backend`): `$env:ATTENDX_SKIP_DOTENV='1'; $env:ATTENDX_TEST_SQLALCHEMY_URL='sqlite+pysqlite:///:memory:'; $env:SECRET_KEY='synthetic-coursework-tests-only-not-a-real-secret'; .\.venv\Scripts\python.exe -m unittest tests.test_tenant_coursework_isolated tests.test_tenant_account_links_isolated tests.test_coursework_orm_contract_static tests.test_tenant_admin_set_password tests.test_tenant_phase14a18_readiness tests.test_tenant_student_registration_conflicts -v` - **PASS: 67 ran, 66 passed, 0 failed, 1 skipped** (Starlette TestClient case requires unavailable optional `httpx2`). This is synthetic SQLite/source test evidence, not PostgreSQL validation.
+- Frontend serial commands (from `frontend`): `node tests/coursework-migration-required.test.mjs`; `node tests/coursework-service-contract.test.mjs`; `node tests/coursework-workspaces.test.mjs` - **PASS: 14 passed, 0 failed**.
+- OpenAPI check used dotenv opt-out, synthetic in-memory SQLite URL and synthetic process-only secret, imported `app.main.app`, then called `app.openapi()` - **PASS: 17 Coursework operations, 4 account-link operations, 4 tenant notification operations**. Legacy `/assignments/` is absent from generated schema.
+- Validation-only build used `node --input-type=module -e "import { build } from 'vite'; await build({ envFile: false, envDir: process.env.TMP_VITE_ENV_DIR, build: { outDir: process.env.TMP_VITE_OUT_DIR, emptyOutDir: true } });"` with a fresh empty `%TEMP%` env directory, `VITE_API_BASE_URL=https://api.attendx.invalid`, and output `%TEMP%\AttendX-Coursework-Vite-20261115_125751` - **BLOCKED: Windows `spawn EPERM` in `commonjs--resolver` before any module transformed**. Existing `frontend/dist` was not written.
+- **NOT TESTED:** browser rendering; authenticated live Coursework API; PostgreSQL assignment, submission or grade persistence; full account-linked workflow. No account links were created because explicit operator-verified profile/User pairs have not been supplied.
+## Phase 16 Coursework review follow-up - 2026-11-15
+
+- PASS: backend focused command documented in the preceding Phase 16 follow-up: 67 tests run, 66 passed, 0 failed, 1 skipped for missing optional `httpx2`; synthetic SQLite, dotenv disabled.
+- PASS: frontend serial commands `node tests/coursework-migration-required.test.mjs`, `node tests/coursework-service-contract.test.mjs`, and `node tests/coursework-workspaces.test.mjs`: 14 passed, 0 failed.
+- PASS: installed `@babel/parser` parsed `src/pages/teacher/TeacherAssignments.jsx` and `src/pages/student/StudentAssignments.jsx` with the JSX plugin.
+- PASS: OpenAPI generated from `app.main.app` with dotenv disabled and synthetic SQLite: 17 `/tenant/coursework` operations, 4 `/tenant/account-links` operations, 4 `/tenant/notifications` operations; `/assignments/` not documented.
+- PASS: Vite 7.3.7 validation build in the authorized local execution context transformed 1,977 modules; command called Vite `build({ envFile: false, envDir: process.env.TMP_VITE_ENV_DIR, build: { outDir: process.env.TMP_VITE_OUT_DIR, emptyOutDir: true } })`, with empty `%TEMP%` env directory and `VITE_API_BASE_URL=https://api.attendx.invalid`. Output: `%TEMP%\AttendX-Coursework-Vite-External-20261115_130709`, outside repository. Build is validation-only, not deployment output. `frontend/dist` unchanged. Warnings: ignored `use client` module directives and a large chunk warning.
+- The same build under the restricted execution environment remained blocked by `spawn EPERM` in Vite's Windows path resolver. Running in the separately authorized local execution context provided the safe workaround; no permissions/security settings changed.
+- PASS: `git diff --check`; scoped trailing-whitespace scan reports 0 issues. Git emits unrelated LF-to-CRLF notices on pre-existing modified files.
+- PASS: source snapshot folders exist at `%TEMP%\AttendX-Coursework-Backups\20261115_125304` and `%TEMP%\AttendX-Coursework-Backups\20261115_130601`; docs snapshot exists at `%TEMP%\AttendX-Coursework-Backups\20261115_130804`.
+- PASS: recorded database backup archive exists and `pg_restore --list` exited 0. This checks archive readability only; no DB connection or operation.
+- NOT TESTED: browser UI, authenticated live API, PostgreSQL coursework persistence, verified profile/User links, full Teacher -> Student -> grading -> Admin workflow.
+## Focused Coursework verification - 2026-11-15
+
+Backend unittest discovery was run separately per file from `backend` with the project virtualenv, dotenv opt-out and synthetic in-memory SQLite URL:
+
+| Module | Passed | Failed | Skipped |
+|---|---:|---:|---:|
+| `test_tenant_coursework_isolated.py` | 27 | 0 | 0 |
+| `test_tenant_account_links_isolated.py` | 6 | 0 | 0 |
+| `test_coursework_orm_contract_static.py` | 11 | 0 | 0 |
+| `test_tenant_admin_set_password.py` | 6 | 0 | 0 |
+| `test_tenant_phase14a18_readiness.py` | 6 | 0 | 1 |
+| `test_tenant_student_registration_conflicts.py` | 10 | 0 | 0 |
+| **Total** | **66** | **0** | **1** |
+
+The skipped test is the default-deny TestClient case; Starlette reports `httpx2` missing. These results are synthetic SQLite/source checks, not PostgreSQL compatibility evidence. Frontend serial Coursework results: **14 passed, 0 failed**. OpenAPI: **17 Coursework + 4 account-link + 4 tenant notification operations**, legacy `/assignments/` absent.
+
+The opt-in PostgreSQL rehearsal was reviewed and not run: it is hard-guarded to the authorized isolated port/database/data-directory, but commits synthetic demo rows and the current instructions prohibit creating them. No DB connection or mutation occurred. Backup archive check: `pg_restore --list` exit 0.
+
+Vite `spawn EPERM` has a safe workaround already verified in the previous pass: run through the authorized local execution context with `envFile:false`, empty temporary env directory, reserved `.invalid` API URL, and output under `%TEMP%`. That build transformed 1,977 modules; a sandboxed retry is still blocked. Browser and authenticated PostgreSQL workflow remain NOT TESTED.
+
+## Final stabilization verification - 2026-11-15
+
+Latest focused validation (see PHASE_16_COURSEWORK_LIVE_SCHEMA_MIGRATION.md and ATTENDX_FINAL_STABILIZATION_2026-11-15.md): backend synthetic/source suites 86 passed, 0 failed, 1 skipped; focused frontend serial tests 82 passed, 0 failed. Vite 7.3.7 validation build PASS in a unique %TEMP% output directory; frontend/dist was not touched. Restricted-context Super Admin component tests first hit spawn EPERM, then passed in the authorized local execution context.
+
+Some backend API/face modules remain BLOCKED at import because httpx2 is unavailable (and httpx is also unavailable for one module). No dependency was installed. Full suites and authenticated live workflows were not run. Synthetic SQLite is not PostgreSQL proof.
+
+
+## Full frontend serial run - 2026-11-15
+
+In the authorized local execution context, all 38 `*.test.mjs` files ran serially: 205 tests, 204 passed, 1 failed, 0 skipped. The sole failure is the artifact audit against the pre-existing `frontend/dist`, which contains a loopback URL; the current source API configuration is development-only for loopback fallback and production fail-closed. Re-running `api-base-url.test.mjs` against the fresh temporary validation bundle passed 13/13. No `dist` file was overwritten.
+
+
+## Full backend unittest discovery - 2026-11-15
+
+With `ATTENDX_SKIP_DOTENV=1`, synthetic in-memory SQLite, synthetic test-only `SECRET_KEY`, and no PostgreSQL rehearsal opt-in, `.venv\Scripts\python.exe -m unittest discover -s tests` reported 255 tests, 26 import errors, 2 skipped, and 0 assertion failures. The import errors are caused by unavailable `httpx2` required by Starlette TestClient; the tenant face test also has no `httpx` fallback installed. No dependency installation or PostgreSQL connection occurred. This full-suite result is BLOCKED, not a source-test PASS.
+
+
+## 2026-11-15 Coursework result-release correction
+PASS: backend isolated synthetic suites: 47 passed, 1 skipped, 0 failed (29 tenant coursework, 12 ORM static, 7 readiness). PASS: frontend direct serial Coursework suites: 15 passed, 0 failed. PASS: Babel JSX parse and source diff whitespace check.
+A publish-handler NameError was fixed. Student grade results are now visible only after a separate Teacher publish action. Draft migration `DRAFT_20261115_10_coursework_grade_publications.sql` remains DRAFT / NOT APPLIED. No PostgreSQL or browser workflow was tested. Vite build remains BLOCKED by Windows spawn EPERM. Live account-link verification and PostgreSQL persistence remain unverified. Production readiness is NOT CLAIMED.
+
+Admin detail APIs and Student evaluated-state display are also covered by synthetic source tests; Admin detail exposes only published grade versions.
+
+## Final completion follow-up - 2026-11-15
+
+PASS: Focused backend coursework/ORM/account-link/readiness suites: 54 passed, 1 skipped, 0 failed (55 tests; synthetic SQLite/static only). Focused frontend Coursework/account-link suites: 19/19 passed. Python AST: 9 files passed. git diff --check: exit 0.
+
+BLOCKED: Latest serial frontend run: 38 files, 206 tests, 181 passed, 25 failed, 0 skipped. Twenty-four failures were Windows spawn EPERM in component/browser-like test harnesses; one artifact audit found a loopback URL in pre-existing frontend/dist. No dist file was modified. Vite validation build remains blocked by spawn EPERM.
+
+BLOCKED: Full backend unittest discovery: 258 tests, 26 import errors, 2 skipped, 0 assertion failures. Import failures require missing httpx2 (one test also lacks httpx); no dependencies were installed.
+
+BLOCKED/UNKNOWN: The specific live Teacher 403 cause is UNKNOWN because no authenticated browser or PostgreSQL inspection occurred. Admin now has a manual verified-link status/create/revoke workflow, but no account pair was inferred or linked. A College Admin must confirm the correct existing Teacher profile and User from authoritative institutional records. The grade publication migration remains DRAFT / NOT APPLIED. PostgreSQL persistence, authenticated end-to-end coursework, and browser behavior are NOT TESTED. Production readiness is NOT CLAIMED.
+
+These latest counts supersede earlier full-suite totals recorded above.
+## Teacher assignment creation follow-up - 2026-11-15
+
+PASS: Source review found an authorization mismatch: assignment creation checked the authenticated user's active same-College Teacher link and active Teacher profile, but the Teacher assignment-list and mapping-selector reads checked the link/mapping without requiring the linked Teacher profile to be active. Those reads now share the same active profile guard, so inactive linked profiles cannot see coursework or receive enabled authoring choices.
+
+PASS: The Create Assignment control remains disabled unless active authorized Class-Subject mappings are loaded and while a save is in progress. When no mappings exist without an API error, the page now explains that the College Admin must assign an active Class and Subject. Existing 401/403 backend messages remain visible with Retry; no authorization bypass was added.
+
+PASS: Backend command from `backend`: `ATTENDX_SKIP_DOTENV=1`, synthetic SQLite test URL, `.venv\Scripts\python.exe -m unittest tests.test_tenant_coursework_isolated tests.test_tenant_account_links_isolated tests.test_coursework_orm_contract_static tests.test_tenant_phase14a18_readiness` — 56 tests, 55 passed, 1 skipped, 0 failed. Frontend serial direct Node suites (Coursework migration, service contract, workspaces, tenant workspace): 19/19 passed. AST: 2 changed Python files passed; Babel JSX parse passed; `git diff --check` passed.
+
+BLOCKED: Vite JS API validation build with `envFile: false`, reserved validation URL, and output directory outside the repository failed with Windows `spawn EPERM` in Vite `commonjs--resolver` / `optimizeSafeRealPathSync` (Node v24.11.1). No security setting was changed and `frontend/dist` was untouched.
+
+UNKNOWN / NOT TESTED: The live authenticated Teacher identity, link row, profile activity, and membership status were not queried. The source-level cause of the exact frontend 403 is the absence of a matching active link for the current user/College or an inactive linked profile; which condition applies to the reported account remains unknown. No link was created. PostgreSQL assignment persistence and browser verification remain NOT TESTED. Migration remains DRAFT / NOT APPLIED; production readiness is NOT CLAIMED.
+## Teacher Create Assignment follow-up - 2026-11-15 (latest)
+
+PASS: Teacher page empty state now distinguishes a successful empty assignment list with authorized mappings (invites the Teacher to create the first assignment) from no active mappings (asks the College Admin to assign them). The Create Assignment action remains fail-closed until authorized mappings are loaded. Related frontend Coursework suites passed 19/19 after this UI change. Backend synthetic suite remains 56 tests, 55 passed, 1 skipped. Vite build remains BLOCKED by `spawn EPERM`; authenticated browser, account-link state, and PostgreSQL assignment persistence are NOT TESTED.
+## Coursework monitoring metric follow-up - 2026-11-15
+
+PASS: Added the missing College Admin evaluated-submission metric and per-assignment evaluated count. Counts include distinct submissions only when a grade publication record exists; private/unpublished grade drafts do not appear in Admin monitoring. Existing College filters are applied to the subqueries. The Admin assignments React route is present and matches the mounted `/tenant/coursework/admin/assignments` API path; the UI reports a 404 as a real service/route failure and does not invent counts.
+
+PASS: Backend isolated Coursework suite: 30/30. Combined Coursework, account-link, ORM-contract and readiness suites: 56 total, 55 passed, 1 skipped. Focused frontend Coursework and tenant-workspace suites: 19/19. Python AST (3 files), JSX parser, and `git diff --check` passed.
+
+BLOCKED: Safe temporary Vite build with `envFile: false` again failed before transforms with Windows `spawn EPERM` in `commonjs--resolver` / `optimizeSafeRealPathSync` (Node v24.11.1). The output target was under `%TEMP%`; `frontend/dist` was not modified.
+
+NOT TESTED: PostgreSQL migration or persistence, live route response, authenticated browser flow, and identity verification for any real Teacher account. All tenant foundation/coursework drafts and grade publication migration 10 remain DRAFT / NOT APPLIED. Production readiness is NOT CLAIMED.
+## Latest full-suite validation - 2026-11-15
+
+BLOCKED: Full backend discovery, run with dotenv disabled and synthetic in-memory SQLite, executed 259 tests and reported 26 import errors, 2 skipped, and 0 assertion failures. The import-time errors are due to the unavailable `httpx2` package required by Starlette TestClient; no dependencies were installed. This does not indicate PostgreSQL integration.
+
+BLOCKED: All 38 frontend `*.test.mjs` files ran serially: 206 tests, 181 passed, 25 failed, 0 skipped. Twenty-four failures are `spawn EPERM` in `face-camera-component`, `landing-page`, `public-pages`, `super-admin-colleges`, and `super-admin-review`; the other failure is the existing `frontend/dist` artifact audit reporting `production-loopback-fallback`. `frontend/dist` was not modified.
+
+PASS: Focused Coursework, account-link, ORM, and readiness suites: 56 tests, 55 passed, 1 skipped. Focused frontend Coursework/tenant workspace suites: 19/19 passed. Temporary Vite build remains BLOCKED by `spawn EPERM`. PostgreSQL persistence, migration execution, authenticated browser workflow, and actual account-link state remain NOT TESTED. Migration status is DRAFT / NOT APPLIED; production readiness is NOT CLAIMED.
+
+These full-suite totals are the latest run and supersede earlier full-suite totals in this report set.

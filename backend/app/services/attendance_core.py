@@ -13,6 +13,22 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+def normalize_session_datetimes(row):
+    """Normalize raw SQL session timestamps for both PostgreSQL and SQLite."""
+    if row is None:
+        return row
+
+    normalized = dict(row)
+    for field in ("starts_at", "ends_at", "qr_expires_at", "created_at", "closed_at"):
+        value = normalized.get(field)
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if isinstance(value, datetime) and value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        normalized[field] = value
+    return normalized
+
+
 def new_qr_secret():
     return secrets.token_urlsafe(32)
 
@@ -118,6 +134,65 @@ def haversine_m(
     )
 
 
+def validate_geofence_fix(latitude, longitude, accuracy_m, radius_m, accuracy_limit_m=100):
+    """Validate measured GPS accuracy independently from the classroom fence radius."""
+    from fastapi import HTTPException
+
+    if latitude is None or longitude is None:
+        raise HTTPException(status_code=400, detail="Location permission is required for this attendance session.")
+    latitude = float(latitude)
+    longitude = float(longitude)
+    if (
+        not math.isfinite(latitude)
+        or not math.isfinite(longitude)
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        raise HTTPException(status_code=400, detail="GPS coordinates are outside valid latitude/longitude ranges.")
+    if accuracy_m is None:
+        raise HTTPException(status_code=400, detail="GPS accuracy was not provided. Refresh your location and retry.")
+    accuracy_m = float(accuracy_m)
+    radius_m = float(radius_m)
+    if not math.isfinite(accuracy_m) or accuracy_m < 0:
+        raise HTTPException(status_code=400, detail="GPS accuracy must be a finite, non-negative distance in metres.")
+    if not math.isfinite(radius_m) or radius_m <= 0:
+        raise HTTPException(status_code=500, detail="The attendance geofence is not configured with a valid radius.")
+    try:
+        accuracy_limit_m = float(accuracy_limit_m)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=500, detail="The College GPS accuracy limit is invalid.")
+    if not math.isfinite(accuracy_limit_m) or not 1 <= accuracy_limit_m <= 150:
+        raise HTTPException(status_code=500, detail="The College GPS accuracy limit is invalid.")
+    if accuracy_m > accuracy_limit_m:
+        raise HTTPException(
+            status_code=403,
+            detail=f"GPS accuracy is too low ({round(accuracy_m)} m). This College requires accuracy within {accuracy_limit_m:g} m. Retry with a more precise location.",
+        )
+    return accuracy_m
+
+
+def get_college_gps_accuracy_limit(db, college_id):
+    """Read the persisted limit for the session's College; never use a client value."""
+    from fastapi import HTTPException
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.models import College
+
+    if college_id is None:
+        raise HTTPException(status_code=503, detail="College GPS accuracy settings are unavailable for this session.")
+    try:
+        limit_m = db.query(College.gps_accuracy_limit_m).filter(College.id == college_id).scalar()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="College GPS accuracy settings are unavailable. The reviewed College settings migration may be required.",
+        ) from exc
+    if isinstance(limit_m, bool) or not isinstance(limit_m, int) or not 1 <= limit_m <= 150:
+        raise HTTPException(status_code=503, detail="College GPS accuracy settings are unavailable or invalid.")
+    return limit_m
+
+
 def get_teacher_for_user(db, user_id: int):
     row = db.execute(
         text(
@@ -168,13 +243,20 @@ def log_audit(
     entity_type=None,
     entity_id=None,
     metadata=None,
+    college_id=None,
 ):
+    """Write an audit event; tenant callers must pass a resolved context ID.
+
+    Existing callers omit college_id and remain global/unknown. This helper
+    never infers tenant ownership from entity IDs or the user's global role.
+    """
     db.execute(
         text(
             """
             INSERT INTO attendance_audit_logs
             (
                 user_id,
+                college_id,
                 action,
                 entity_type,
                 entity_id,
@@ -183,6 +265,7 @@ def log_audit(
             VALUES
             (
                 :user_id,
+                :college_id,
                 :action,
                 :entity_type,
                 :entity_id,
@@ -192,6 +275,7 @@ def log_audit(
         ),
         {
             "user_id": user_id,
+            "college_id": college_id,
             "action": action,
             "entity_type": entity_type,
             "entity_id": entity_id,

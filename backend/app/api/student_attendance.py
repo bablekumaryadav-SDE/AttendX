@@ -1,17 +1,20 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import FaceEmbedding, Student, StudentClassAssignment
-from app.schemas.attendance import StudentQrAttendanceRequest
+from app.schemas.attendance_gis import StudentQrAttendanceGISRequest
 from app.services.attendance_core import (
     haversine_m,
+    get_college_gps_accuracy_limit,
     log_audit,
+    normalize_session_datetimes,
     utcnow,
     verify_current_qr_token,
+    validate_geofence_fix,
 )
 from app.services.face_engine import DEFAULT_THRESHOLD, decode_embedding, embedding_from_image, is_valid_embedding
 
@@ -89,6 +92,7 @@ def _get_session(db: Session, session_id: int):
             """
             SELECT
                 s.id,
+                s.college_id,
                 s.title,
                 s.subject_id,
                 s.class_id,
@@ -104,7 +108,8 @@ def _get_session(db: Session, session_id: int):
                 sub.name AS subject_name,
                 sub.code AS subject_code,
                 c.name AS class_name,
-                c.section
+                c.section,
+                c.location_name
             FROM attendance_sessions s
             JOIN subjects sub
                 ON sub.id = s.subject_id
@@ -122,7 +127,7 @@ def _get_session(db: Session, session_id: int):
             detail="Attendance session not found.",
         )
 
-    return row
+    return normalize_session_datetimes(row)
 
 
 @router.get("/active-sessions")
@@ -175,6 +180,7 @@ def active_sessions(
                 sub.code AS subject_code,
                 c.name AS class_name,
                 c.section,
+                c.location_name,
                 t.name AS teacher_name,
                 CASE
                     WHEN e.id IS NOT NULL THEN TRUE
@@ -220,7 +226,7 @@ def active_sessions(
 @router.post("/sessions/{session_id}/qr")
 def submit_qr_attendance(
     session_id: int,
-    body: StudentQrAttendanceRequest,
+    body: StudentQrAttendanceGISRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -286,14 +292,14 @@ def submit_qr_attendance(
         session["latitude"] is not None
         and session["longitude"] is not None
     ):
-        if distance is None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Location permission is required "
-                    "for this attendance session."
-                ),
-            )
+        accuracy_limit_m = get_college_gps_accuracy_limit(db, session.get("college_id"))
+        validate_geofence_fix(
+            body.latitude,
+            body.longitude,
+            body.accuracy_m,
+            session["radius_m"],
+            accuracy_limit_m=accuracy_limit_m,
+        )
 
         if distance > float(session["radius_m"]):
             raise HTTPException(
@@ -304,29 +310,29 @@ def submit_qr_attendance(
                 ),
             )
 
-    duplicate = db.execute(
-        text(
-            """
-            SELECT id
-            FROM attendance_events
-            WHERE session_id = :session_id
-              AND student_id = :student_id
-            LIMIT 1
-            """
-        ),
-        {
-            "session_id": session_id,
-            "student_id": student_id,
-        },
-    ).scalar()
-
-    if duplicate:
-        raise HTTPException(
-            status_code=409,
-            detail="Attendance has already been recorded for this session.",
-        )
-
     try:
+        duplicate = db.execute(
+            text(
+                """
+                SELECT id
+                FROM attendance_events
+                WHERE session_id = :session_id
+                  AND student_id = :student_id
+                LIMIT 1
+                """
+            ),
+            {
+                "session_id": session_id,
+                "student_id": student_id,
+            },
+        ).scalar()
+
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail="Attendance has already been recorded for this session.",
+            )
+
         db.execute(
             text(
                 """
@@ -357,9 +363,20 @@ def submit_qr_attendance(
             {"student_id": student_id, "method": "qr", "distance_m": distance},
         )
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Attendance has already been recorded for this session.") from exc
+    except OperationalError as exc:
+        db.rollback()
+        if db.get_bind().dialect.name == "sqlite" and "locked" in str(exc).lower():
+            raise HTTPException(
+                status_code=409,
+                detail="An attendance submission for this session is already being processed. Please check your attendance status.",
+            ) from exc
+        raise HTTPException(status_code=500, detail="Unable to save attendance. Please try again.") from exc
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail="Unable to save attendance. Please try again.") from exc
@@ -381,6 +398,7 @@ async def submit_face_attendance(
     file: UploadFile = File(...),
     latitude: float | None = Form(default=None),
     longitude: float | None = Form(default=None),
+    accuracy_m: float | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -437,8 +455,14 @@ async def submit_face_attendance(
 
     distance = haversine_m(session["latitude"], session["longitude"], latitude, longitude)
     if session["latitude"] is not None and session["longitude"] is not None:
-        if distance is None:
-            raise HTTPException(status_code=400, detail="Location permission is required for this attendance session.")
+        accuracy_limit_m = get_college_gps_accuracy_limit(db, session.get("college_id"))
+        validate_geofence_fix(
+            latitude,
+            longitude,
+            accuracy_m,
+            session["radius_m"],
+            accuracy_limit_m=accuracy_limit_m,
+        )
         if distance > float(session["radius_m"]):
             raise HTTPException(status_code=403, detail=f"You are outside the attendance zone ({round(distance)} m away).")
 

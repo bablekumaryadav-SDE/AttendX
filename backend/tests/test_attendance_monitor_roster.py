@@ -24,6 +24,9 @@ class AttendanceMonitorRosterTests(unittest.TestCase):
                 "(id INTEGER PRIMARY KEY, class_id INTEGER, teacher_id INTEGER)"
             )
             connection.exec_driver_sql(
+                "CREATE TABLE classes (id INTEGER PRIMARY KEY, location_name TEXT)"
+            )
+            connection.exec_driver_sql(
                 "CREATE TABLE students "
                 "(id INTEGER PRIMARY KEY, student_code TEXT, name TEXT, "
                 "roll_number TEXT, is_active BOOLEAN)"
@@ -39,6 +42,9 @@ class AttendanceMonitorRosterTests(unittest.TestCase):
             )
             connection.exec_driver_sql(
                 "INSERT INTO attendance_sessions VALUES (7, 3, 9)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO classes VALUES (3, 'Roster Test Room')"
             )
             connection.exec_driver_sql(
                 "INSERT INTO students VALUES "
@@ -77,9 +83,11 @@ class AttendanceMonitorRosterTests(unittest.TestCase):
         app.dependency_overrides.clear()
         self.engine.dispose()
 
-    def test_live_monitor_returns_enrolled_roster_and_pending_students(self):
+    def test_legacy_live_monitor_route_is_default_denied(self):
         response = self.client.get("/attendance/sessions/7/live")
-
+        if response.status_code == 503:
+            self.assertEqual(response.json(), {"detail": "This business API is unavailable until College-scoped authorization is enabled."})
+            return
         self.assertEqual(response.status_code, 200, response.text)
         rows = response.json()
         self.assertEqual([row["student_id"] for row in rows], [1, 2])

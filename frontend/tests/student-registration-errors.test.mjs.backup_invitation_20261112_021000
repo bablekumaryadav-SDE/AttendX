@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { mapStudentRegistrationFailure } from "../src/utils/studentRegistrationErrors.js";
+
+test("structured duplicate errors attach only to the matching Student registration field", () => {
+  const mapped = mapStudentRegistrationFailure({
+    response: { status: 409, data: { detail: {
+      code: "enrollment_number_already_used",
+      field: "enrollment_number",
+      message: "Enrollment number already exists in this College.",
+    } } },
+  });
+  assert.deepEqual(mapped, {
+    fieldErrors: { enrollment_number: "Enrollment number already exists in this College." },
+    formError: "",
+  });
+});
+
+test("Pydantic validation maps safe location/message fields and ignores input values", () => {
+  const mapped = mapStudentRegistrationFailure({
+    response: { status: 422, data: { detail: [
+      { loc: ["body", "email"], msg: "Input should be a valid email address", input: "private-value@example.test" },
+      { loc: ["body", "password"], msg: "Password confirmation does not match", input: "synthetic-sensitive-value" },
+    ] } },
+  });
+  assert.equal(mapped.fieldErrors.email, "Input should be a valid email address");
+  assert.equal(mapped.fieldErrors.password, "Password confirmation does not match");
+  assert.equal(JSON.stringify(mapped).includes("private-value"), false);
+  assert.equal(JSON.stringify(mapped).includes("synthetic-sensitive-value"), false);
+});
+
+test("unexpected server errors remain form-level and never render object details", () => {
+  const mapped = mapStudentRegistrationFailure({
+    response: { status: 503, data: { detail: "Student registration is temporarily unavailable." } },
+  });
+  assert.deepEqual(mapped, {
+    fieldErrors: {},
+    formError: "Student registration is temporarily unavailable.",
+  });
+});
+
+test("generated Student ID collisions stay as form-level registration errors", () => {
+  const mapped = mapStudentRegistrationFailure({
+    response: { status: 409, data: { detail: {
+      code: "student_code_collision",
+      field: "student_code",
+      message: "A generated Student ID conflicted with existing data. No account was created; retry registration.",
+    } } },
+  });
+  assert.deepEqual(mapped, {
+    fieldErrors: {},
+    formError: "A generated Student ID conflicted with existing data. No account was created; retry registration.",
+  });
+});

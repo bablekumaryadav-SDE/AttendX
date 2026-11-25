@@ -1,0 +1,68 @@
+.tenant-notification-page {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 8px 0 24px;
+  color: var(--ax-ink, #17233f);
+}
+
+.tenant-notification-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding: 26px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  background: linear-gradient(120deg, #172544 0%, #292c67 72%, #37367b 100%);
+  box-shadow: 0 20px 44px rgba(23,35,63,.16);
+  color: #fff;
+}
+
+.tenant-notification-hero h1 { margin: 8px 0; color: #fff; font-size: clamp(24px, 3vw, 32px); font-weight: 750; letter-spacing: -.035em; }
+.tenant-notification-hero p { margin: 0; color: #d9def5; line-height: 1.65; }
+.tenant-notification-eyebrow { display: inline-block; color: #68758d; font-size: 11px; font-weight: 800; letter-spacing: .09em; }
+.tenant-notification-hero .tenant-notification-eyebrow { color: #d9def5; }
+.tenant-notification-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.tenant-notification-panel { min-width: 0; margin-bottom: 22px; padding: 20px; border: 1px solid var(--border-color, #e2e8f0); border-radius: 16px; background: var(--card-bg, #fff); box-shadow: var(--ax-shadow, 0 12px 32px rgba(23,35,63,.06)); }
+.tenant-notification-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 20px; }
+.tenant-notification-panel h2 { margin: 7px 0; color: var(--ax-ink, #17233f); font-size: 19px; }
+.tenant-notification-panel-heading p { margin: 0; color: var(--ax-muted, #69768d); line-height: 1.65; }
+.tenant-notification-inline-toggle { display: inline-flex; align-items: center; gap: 8px; color: #526078; font-size: 13px; }
+.tenant-notification-inline-toggle input { accent-color: #4f46e5; }
+.tenant-notification-primary-button, .tenant-notification-secondary-button, .tenant-notification-unavailable button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 11px; border: 1px solid #d7deeb; border-radius: 8px; background: #fff; color: #34415b; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.tenant-notification-primary-button { padding: 10px 15px; border: 0; border-radius: 9px; background: #4338ca; color: #fff; font-size: 13px; }
+.tenant-notification-primary-button:hover:not(:disabled) { box-shadow: 0 7px 16px rgba(73,65,189,.18); transform: translateY(-1px); }
+.tenant-notification-secondary-button:hover:not(:disabled), .tenant-notification-unavailable button:hover { background: #f5f7ff; }
+.tenant-notification-primary-button:disabled, .tenant-notification-secondary-button:disabled { cursor: not-allowed; opacity: .55; }
+.tenant-notification-primary-button:focus-visible, .tenant-notification-secondary-button:focus-visible, .tenant-notification-actions :focus-visible { outline: 3px solid rgba(93,85,217,.35); outline-offset: 2px; }
+.tenant-notification-unavailable { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; padding: 22px; border: 1px solid #f2d7a2; border-radius: 16px; background: #fffbeb; }
+.tenant-notification-status-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 12px; background: #eef2ff; color: #4338ca; }
+.tenant-notification-unavailable p { margin: 7px 0; color: #64748b; font-size: 14px; line-height: 1.65; }
+.tenant-notification-notice { margin: 0 0 18px; padding: 12px 14px; border: 1px solid #a7f3d0; border-radius: 10px; background: #ecfdf5; color: #065f46; font-size: 13px; }
+.tenant-notification-empty-state { padding: 28px 18px; border: 1px dashed #cbd5e1; border-radius: 13px; background: #fbfcff; text-align: center; color: #64748b; }
+.tenant-notification-empty-state h3 { margin: 12px 0 7px; color: #17233f; font-size: 15px; }
+.tenant-notification-empty-state p { margin: 7px 0; font-size: 14px; line-height: 1.65; }
+.tenant-notification-list { display: grid; gap: 14px; }
+.tenant-notification-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; min-width: 0; padding: 18px; border: 1px solid #e2e8f0; border-radius: 13px; background: #fff; }
+.tenant-notification-card.is-unread { border-left: 4px solid #4f46e5; background: #fbfbff; }
+.tenant-notification-content { min-width: 0; }
+.tenant-notification-card h3 { margin: 9px 0; color: #17233f; }
+.tenant-notification-card p { white-space: pre-wrap; color: #58667d; line-height: 1.65; }
+.tenant-notification-card time { color: #718096; font-size: 12px; }
+.tenant-notification-pages { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 18px; color: #526078; font-size: 13px; }
+.tenant-notification-role-note { margin: 10px 0 24px; color: #64748b; font-size: 12px; line-height: 1.6; }
+
+@media (max-width: 640px) {
+  .tenant-notification-page { padding: 4px 0 18px; }
+  .tenant-notification-hero, .tenant-notification-panel-heading { align-items: flex-start; flex-direction: column; }
+  .tenant-notification-hero { padding: 19px; }
+  .tenant-notification-panel { padding: 16px; }
+  .tenant-notification-panel-heading { width: 100%; }
+  .tenant-notification-unavailable { padding: 16px; }
+  .tenant-notification-card { flex-direction: column; }
+  .tenant-notification-actions { width: 100%; flex-direction: column; }
+  .tenant-notification-actions button { width: 100%; }
+  .tenant-notification-pages { flex-wrap: wrap; }
+}

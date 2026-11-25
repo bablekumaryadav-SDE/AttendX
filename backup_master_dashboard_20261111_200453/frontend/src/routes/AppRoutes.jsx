@@ -1,0 +1,236 @@
+import React from "react";
+
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+} from "react-router-dom";
+
+import { AuthProvider } from "../context/AuthContext";
+
+import ProtectedRoute from "./ProtectedRoute";
+import DashboardLayout from "../layouts/DashboardLayout";
+import AuthLayout from "../layouts/AuthLayout";
+
+import LandingPage from "../pages/LandingPage";
+import AboutPage from "../pages/public/AboutPage";
+import FeaturesPage from "../pages/public/FeaturesPage";
+import HowItWorksPage from "../pages/public/HowItWorksPage";
+import FounderPage from "../pages/public/FounderPage";
+import ContactPage from "../pages/public/ContactPage";
+import PrivacyPolicyPage from "../pages/public/PrivacyPolicyPage";
+import TermsPage from "../pages/public/TermsPage";
+import CollegeRegistrationPage from "../pages/public/CollegeRegistrationPage";
+import AccountActivationPage from "../pages/public/AccountActivationPage";
+import Login from "../pages/auth/Login";
+import SuperAdminHome from "../pages/auth/SuperAdminHome";
+import SuperAdminColleges from "../pages/auth/SuperAdminColleges";
+import TenantAdminDashboard from "../pages/auth/admin/TenantAdminDashboard";
+
+import TenantStudents from "../pages/auth/admin/TenantStudents";
+import Teachers from "../pages/auth/admin/Teachers";
+import Classes from "../pages/auth/admin/Classes";
+import AcademicManagement from "../pages/auth/admin/AcademicManagement";
+import FeatureUnavailable from "../pages/FeatureUnavailable";
+
+import TenantAttendance from "../pages/auth/admin/TenantAttendance";
+import StudentDashboard from "../pages/student/StudentDashboard";
+import StudentAttendance from "../pages/student/StudentAttendance";
+
+import TeacherDashboard from "../pages/teacher/TeacherDashboard";
+import TeacherAttendance from "../pages/teacher/TeacherAttendance";
+
+class WorkspaceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error) {
+    if (import.meta.env.DEV) {
+      console.error("AttendX workspace render failed:", error);
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main role="alert" className="app-error-fallback">
+          <h1>This page could not be displayed.</h1>
+          <p>Refresh the page to try again. If the problem continues, contact your administrator.</p>
+          {import.meta.env.DEV && this.state.error && (
+            <pre>{String(this.state.error.stack || this.state.error.message || this.state.error)}</pre>
+          )}
+          <button type="button" onClick={() => window.location.reload()}>
+            Refresh page
+          </button>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function HomeRoute() {
+  return <LandingPage />;
+}
+
+function AppRouteContent() {
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={<HomeRoute />}
+      />
+
+      <Route path="/about" element={<AboutPage />} />
+      <Route path="/features" element={<FeaturesPage />} />
+      <Route path="/how-it-works" element={<HowItWorksPage />} />
+      <Route path="/founder" element={<FounderPage />} />
+      <Route path="/contact" element={<ContactPage />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/register-college" element={<CollegeRegistrationPage />} />
+      <Route path="/activate-account" element={<AccountActivationPage />} />
+
+      <Route
+        path="/login"
+        element={
+          <AuthLayout>
+            <Login />
+          </AuthLayout>
+        }
+      />
+
+      <Route
+        path="/platform"
+        element={
+          <ProtectedRoute allowedRoles={["super_admin"]}>
+            <SuperAdminHome />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/platform/colleges"
+        element={
+          <ProtectedRoute allowedRoles={["super_admin"]}>
+            <SuperAdminColleges />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Admin workspace */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute allowedRoles={["admin", "college_admin"]}>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<TenantAdminDashboard />} />
+
+        <Route
+          path="students"
+          element={<TenantStudents />}
+        />
+
+        <Route
+          path="teachers"
+          element={<Teachers />}
+        />
+
+        <Route
+          path="classes"
+          element={<Classes />}
+        />
+
+        <Route path="subjects" element={<AcademicManagement />} />
+
+        <Route path="notifications" element={<FeatureUnavailable name="Notifications" />} />
+
+        <Route
+          path="attendance"
+          element={<TenantAttendance />}
+        />
+
+        <Route path="attendance/legacy" element={<FeatureUnavailable name="Legacy attendance" />} />
+
+        <Route
+          path="reports"
+          element={<FeatureUnavailable name="Reports" />}
+        />
+
+      </Route>
+
+      {/* Teacher workspace */}
+      <Route
+        path="/teacher"
+        element={
+          <ProtectedRoute allowedRoles={["teacher"]}>
+            <WorkspaceErrorBoundary>
+              <DashboardLayout />
+            </WorkspaceErrorBoundary>
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<TeacherDashboard />} />
+
+        <Route
+          path="attendance"
+          element={<TeacherAttendance />}
+        />
+
+        <Route
+          path="reports"
+          element={<FeatureUnavailable name="Reports" />}
+        />
+
+        <Route path="notifications" element={<FeatureUnavailable name="Notifications" />} />
+
+      </Route>
+
+      {/* Student workspace */}
+      <Route
+        path="/student"
+        element={
+          <ProtectedRoute allowedRoles={["student"]}>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<StudentDashboard />} />
+
+        <Route
+          path="attendance"
+          element={<StudentAttendance />}
+        />
+
+      <Route path="notifications" element={<FeatureUnavailable name="Notifications" />} />
+
+      </Route>
+
+      <Route
+        path="*"
+        element={<Navigate to="/" replace />}
+      />
+    </Routes>
+  );
+}
+
+export default function AppRoutes() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRouteContent />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

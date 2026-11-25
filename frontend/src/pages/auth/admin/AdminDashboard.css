@@ -92,6 +92,44 @@
   font-size: 12px;
 }
 
+/* Tenant overview visual hierarchy */
+.admin-dashboard-page { max-width: 1500px; }
+.ad-header {
+  position: relative;
+  align-items: center;
+  min-height: 190px;
+  padding: clamp(24px, 3vw, 38px);
+  overflow: hidden;
+  border: 1px solid #27395a;
+  border-radius: 20px;
+  color: #fff;
+  background: radial-gradient(ellipse at 83% 5%, rgba(121,106,229,.3), transparent 40%), linear-gradient(112deg,#172642 0%,#202e4d 67%,#28385b 100%);
+  box-shadow: 0 18px 38px rgba(24,38,68,.13);
+}
+.ad-header:after { position:absolute;right:17%;bottom:-130px;width:300px;height:250px;border:1px solid rgba(255,255,255,.08);border-radius:50%;content:"";transform:rotate(-22deg);pointer-events:none; }
+.ad-header-copy,.ad-header-tools { position:relative;z-index:1; }
+.ad-eyebrow,.ad-header .ad-eyebrow { color:#b9b5ff;font-size:9px;letter-spacing:.16em; }
+.ad-header h1 { margin:10px 0 5px;color:#fff;font-size:clamp(27px,3.3vw,39px);letter-spacing:-.045em; }
+.ad-header p { max-width:640px;color:#c6cfdf;font-size:12px;line-height:1.7; }
+.ad-header .ad-college-name { margin:0 0 7px;color:#fff;font-size:15px;font-weight:750; }
+.ad-header-tools { display:grid;justify-items:end;gap:10px;min-width:205px; }
+.ad-scope-card { display:grid;gap:5px;width:100%;max-width:245px;padding:12px 14px;border:1px solid rgba(255,255,255,.13);border-radius:12px;background:rgba(255,255,255,.08);backdrop-filter:blur(8px); }
+.ad-scope-card span { color:#b9b5ff;font-size:8px;font-weight:850;letter-spacing:.15em; }
+.ad-scope-card strong { overflow:hidden;color:white;font-size:12px;text-overflow:ellipsis;white-space:nowrap; }
+.ad-scope-card small { color:#c6cfdf;font-size:9px; }
+.ad-refresh { min-height:39px;border-color:rgba(255,255,255,.2);background:#fff;color:#273858; }
+.ad-stat-grid { grid-template-columns:repeat(3,minmax(0,1fr));gap:13px; }
+.ad-stat { position:relative;min-height:116px;padding:20px 21px 19px 24px;overflow:hidden; }
+.ad-stat:before { position:absolute;inset:18px auto 18px 0;width:3px;border-radius:0 3px 3px 0;background:#766ce1;content:""; }
+.ad-stat:nth-child(3n+2):before { background:#4a9b85; }
+.ad-stat:nth-child(3n):before { background:#c78a4a; }
+.ad-stat strong { color:#182744;font-size:clamp(25px,2.6vw,32px); }
+.ad-grid { grid-template-columns:minmax(260px,.82fr) minmax(0,1.55fr);align-items:start; }
+.ad-card { border-radius:16px; }
+.ad-card-head h2 { color:#192744;letter-spacing:-.025em; }
+@media(max-width:900px){.ad-header{align-items:flex-start;flex-direction:column}.ad-header-tools{width:100%;grid-template-columns:minmax(0,1fr) auto;align-items:center;justify-items:stretch}.ad-scope-card{max-width:none}.ad-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ad-grid{grid-template-columns:1fr}}
+@media(max-width:520px){.admin-dashboard-page{padding:16px}.ad-header{min-height:0;padding:22px 18px}.ad-header-tools{grid-template-columns:1fr}.ad-refresh{justify-self:start}.ad-stat-grid{grid-template-columns:1fr 1fr;gap:9px}.ad-stat{min-height:105px;padding:16px 12px 14px 17px}.ad-stat strong{font-size:22px}.ad-stat small{font-size:10px}.ad-grid .ad-card{padding:16px}}
+
 .ad-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;

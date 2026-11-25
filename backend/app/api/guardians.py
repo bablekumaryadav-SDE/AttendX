@@ -14,46 +14,6 @@ from app.models import Student
 router = APIRouter()
 
 
-GUARDIAN_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS student_guardians (
-    student_id INTEGER PRIMARY KEY
-        REFERENCES students(id)
-        ON DELETE CASCADE,
-
-    guardian_name VARCHAR(120) NOT NULL,
-
-    guardian_relationship VARCHAR(30)
-        NOT NULL
-        DEFAULT 'Father',
-
-    guardian_mobile VARCHAR(20)
-        NOT NULL,
-
-    alternate_mobile VARCHAR(20),
-
-    notify_absence BOOLEAN
-        NOT NULL
-        DEFAULT TRUE,
-
-    notify_low_attendance BOOLEAN
-        NOT NULL
-        DEFAULT TRUE,
-
-    notification_channel VARCHAR(20)
-        NOT NULL
-        DEFAULT 'sms_email',
-
-    created_at TIMESTAMPTZ
-        NOT NULL
-        DEFAULT NOW(),
-
-    updated_at TIMESTAMPTZ
-        NOT NULL
-        DEFAULT NOW()
-)
-"""
-
-
 class GuardianPayload(BaseModel):
     guardian_name: str = Field(
         min_length=2,
@@ -103,6 +63,8 @@ ALLOWED_RELATIONSHIPS = {
     "Father",
     "Mother",
     "Guardian",
+    "Brother",
+    "Sister",
     "Other",
 }
 
@@ -111,35 +73,6 @@ ALLOWED_CHANNELS = {
     "sms",
     "email",
 }
-
-
-def _ensure_guardian_table(
-    db: Session,
-) -> None:
-    """
-    Create the guardian table if it does not
-    already exist.
-
-    This keeps the feature compatible with the
-    current project without requiring a separate
-    migration tool at this stage.
-    """
-
-    db.execute(
-        text(GUARDIAN_TABLE_SQL)
-    )
-
-    db.execute(
-        text(
-            """
-            CREATE INDEX IF NOT EXISTS
-            ix_student_guardians_mobile
-            ON student_guardians (guardian_mobile)
-            """
-        )
-    )
-
-    db.commit()
 
 
 def _normalize_phone(
@@ -153,6 +86,12 @@ def _normalize_phone(
     """
 
     raw = value.strip()
+
+    if not raw or not re.fullmatch(r"\+?[0-9\s().-]+", raw):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field_name} must contain a valid mobile number.",
+        )
 
     digits = re.sub(
         r"\D",
@@ -211,6 +150,14 @@ def _validate_payload(
                 "Parent / guardian name "
                 "is required."
             ),
+        )
+
+    if not any(character.isalpha() for character in name) or any(
+        ord(character) < 32 for character in name
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Parent / guardian name must contain valid text.",
         )
 
     if (
@@ -365,8 +312,6 @@ def get_guardian(
         get_current_admin
     ),
 ):
-    _ensure_guardian_table(db)
-
     _get_student(
         db,
         student_id,
@@ -405,8 +350,6 @@ def get_guardian(
         )
 
     return _row_to_response(row)
-
-
 # =========================================================
 # SAVE / UPDATE GUARDIAN
 # PUT /students/{student_id}/guardian
@@ -426,8 +369,6 @@ def save_guardian(
         get_current_admin
     ),
 ):
-    _ensure_guardian_table(db)
-
     _get_student(
         db,
         student_id,
@@ -530,44 +471,3 @@ def save_guardian(
     ).first()
 
     return _row_to_response(row)
-
-
-# =========================================================
-# ROUTER ATTACHMENT
-# =========================================================
-
-def attach_guardian_routes(
-    target_router: APIRouter,
-) -> None:
-    """
-    Attach guardian routes to the existing
-    Students APIRouter.
-
-    This allows the endpoints to remain:
-
-        /students/{id}/guardian
-    """
-
-    existing_paths = {
-        getattr(
-            route,
-            "path",
-            None,
-        )
-        for route in target_router.routes
-    }
-
-    for route in router.routes:
-        route_path = getattr(
-            route,
-            "path",
-            None,
-        )
-
-        if (
-            route_path
-            not in existing_paths
-        ):
-            target_router.routes.append(
-                route
-            )

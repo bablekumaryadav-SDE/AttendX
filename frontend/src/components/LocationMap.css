@@ -1,0 +1,33 @@
+.location-map-shell {
+  position: relative;
+  width: 100%;
+}
+
+.location-map {
+  width: 100%;
+  min-height: 240px;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  background: #f2f4f7;
+  z-index: 0;
+}
+
+.location-map-hint {
+  display: block;
+  margin-top: 7px;
+  color: #667085;
+  font-size: 11px;
+}
+
+.location-map-marker {
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  background: #4f46e5;
+  box-shadow: 0 2px 8px rgb(16 24 40 / 35%);
+  transform: rotate(-45deg);
+  cursor: grab;
+}
+
+.location-map-marker:active {
+  cursor: grabbing;
+}

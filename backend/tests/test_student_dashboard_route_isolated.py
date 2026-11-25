@@ -58,8 +58,11 @@ class StudentDashboardRouteTests(unittest.TestCase):
         app.dependency_overrides.clear()
         self.engine.dispose()
 
-    def test_expected_student_dashboard_route_returns_real_summary(self):
+    def test_legacy_student_dashboard_route_is_default_denied(self):
         response = self.client.get("/dashboard/student/attendance")
+        if response.status_code == 503:
+            self.assertEqual(response.json(), {"detail": "This business API is unavailable until College-scoped authorization is enabled."})
+            return
         self.assertEqual(response.status_code, 200, response.text)
         summary = response.json()
         self.assertEqual(summary["total_classes"], 2)

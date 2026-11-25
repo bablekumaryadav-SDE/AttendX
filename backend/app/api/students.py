@@ -617,7 +617,9 @@ async def register_student_face(
             detail="Activate the student before registering a face.",
         )
 
-    data = await file.read()
+    # Bound the read itself; validating after an unbounded UploadFile.read()
+    # would still allow oversized requests to consume arbitrary memory.
+    data = await file.read(MAX_FACE_IMAGE_BYTES + 1)
 
     _validate_face_file(file.content_type, data)
 

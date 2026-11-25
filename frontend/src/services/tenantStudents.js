@@ -1,0 +1,197 @@
+import api from "./api.js";
+import { requireSelectedCollegeId } from "./tenantSelection.js";
+
+// Tenant-scoped Student reads plus narrowly authorized registration and progression.
+export async function getTenantStudents(collegeId, filters = {}) {
+  const params = Object.fromEntries(Object.entries({
+    search: filters.search,
+    active_only: filters.activeOnly,
+    face_status: filters.faceStatus && filters.faceStatus !== "all" ? filters.faceStatus : undefined,
+    course: filters.course,
+    department: filters.department,
+    admission_year: filters.admissionYear,
+    current_academic_year: filters.currentAcademicYear,
+    current_semester: filters.currentSemester,
+    section: filters.section,
+    page: filters.page,
+    page_size: filters.pageSize,
+    college_id: requireSelectedCollegeId(collegeId),
+  }).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  const response = await api.get("/students/", { params });
+  return response.data;
+}
+
+export async function getTenantStudent(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) {
+    throw new Error("Student ID is required.");
+  }
+  const response = await api.get(`/students/${Number(studentId)}`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function getTenantStudentAccountLink(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.get(`/tenant/account-links/students/${Number(studentId)}`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function searchStudentAccountLinkCandidates(search, collegeId, limit = 25) {
+  const query = String(search || "").trim();
+  if (query.length < 2) throw new Error("Enter at least two characters to search active Student login accounts.");
+  const response = await api.get("/tenant/account-links/students/eligible-users", {
+    params: {
+      search: query,
+      limit,
+      college_id: requireSelectedCollegeId(collegeId),
+    },
+  });
+  return response.data;
+}
+
+export async function createStudentAccountLink(studentId, userId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1
+      || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+    throw new Error("Student profile ID and existing User ID are required.");
+  }
+  const response = await api.post(`/tenant/account-links/students/${Number(studentId)}`, {
+    user_id: Number(userId),
+    identity_verified: true,
+  }, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function revokeStudentAccountLink(linkId, reason, collegeId) {
+  if (!Number.isSafeInteger(Number(linkId)) || Number(linkId) < 1) throw new Error("Account-link ID is required.");
+  const response = await api.post(`/tenant/account-links/students/${Number(linkId)}/revoke`, {
+    reason: String(reason || "").trim(),
+  }, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function getTenantStudentFaceStatus(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.get(`/tenant/face/students/${Number(studentId)}`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function registerTenantStudentFace(studentId, file, collegeId, consent) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1 || !file) throw new Error("Student and face capture are required.");
+  const formData = new FormData();
+  formData.append("file", file, file.name || "student-face.jpg");
+  formData.append("consent", consent ? "true" : "false");
+  const response = await api.post(`/tenant/face/students/${Number(studentId)}/register`, formData, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 30000,
+  });
+  return response.data;
+}
+
+export async function createTenantStudent(payload, collegeId) {
+  const response = await api.post("/students/", payload, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function updateTenantStudent(studentId, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.patch(`/students/${Number(studentId)}`, payload, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function deactivateTenantStudent(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.delete(`/students/${Number(studentId)}`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function activateTenantStudent(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.patch(`/students/${Number(studentId)}/activate`, null, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function resetTenantStudentPassword(studentId, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.patch(`/students/${Number(studentId)}/password`, payload, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function getTenantStudentClassAssignments(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.get(`/students/${Number(studentId)}/class-assignments`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function assignTenantStudentToClass(studentId, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) throw new Error("Student ID is required.");
+  const response = await api.post(`/students/${Number(studentId)}/class-assignments`, payload, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function deactivateTenantStudentClassAssignment(studentId, assignmentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1 || !Number.isSafeInteger(Number(assignmentId)) || Number(assignmentId) < 1) {
+    throw new Error("Student and assignment IDs are required.");
+  }
+  const response = await api.delete(`/students/${Number(studentId)}/class-assignments/${Number(assignmentId)}`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function getTenantStudentAcademicHistory(studentId, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) {
+    throw new Error("Student ID is required.");
+  }
+  const response = await api.get(`/students/${Number(studentId)}/academic-history`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function promoteTenantStudent(studentId, payload, collegeId) {
+  if (!Number.isSafeInteger(Number(studentId)) || Number(studentId) < 1) {
+    throw new Error("Student ID is required.");
+  }
+  const response = await api.post(`/students/${Number(studentId)}/promotions`, payload, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function getTenantStudentInvitation(studentId, collegeId) {
+  const response = await api.get(`/students/${Number(studentId)}/invitation`, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}
+
+export async function resendTenantStudentInvitation(studentId, collegeId) {
+  const response = await api.post(`/students/${Number(studentId)}/invitation/resend`, null, {
+    params: { college_id: requireSelectedCollegeId(collegeId) },
+  });
+  return response.data;
+}

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import inspect, text
 
@@ -187,7 +188,7 @@ def next_student_code(db) -> str:
 
     year = datetime.now(timezone.utc).year
 
-    if engine.dialect.name == "postgresql":
+    if db.get_bind().dialect.name == "postgresql":
 
         db.execute(
             text(
@@ -239,6 +240,20 @@ def next_student_code(db) -> str:
         .with_for_update()
         .one()
     )
+
+    # Older/imported IDs may be present while the counter is missing or stale.
+    # Reconcile under the PostgreSQL advisory transaction lock (and row lock)
+    # before allocating so the generated code cannot collide with those rows.
+    prefix = f"{STUDENT_CODE_PREFIX}-{year}-"
+    existing_codes = db.query(Student.student_code).filter(
+        Student.student_code.like(f"{prefix}%")
+    ).all()
+    existing_numbers = []
+    for (code,) in existing_codes:
+        match = re.fullmatch(re.escape(prefix) + r"(\d+)", code or "")
+        if match:
+            existing_numbers.append(int(match.group(1)))
+    counter.last_number = max(counter.last_number, max(existing_numbers, default=0))
 
     counter.last_number += 1
 

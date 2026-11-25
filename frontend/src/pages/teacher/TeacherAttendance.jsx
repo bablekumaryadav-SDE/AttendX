@@ -1,22 +1,27 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { useAuth } from "../../context/AuthContext";
+import { getTenantCollegeProfile } from "../../services/tenant";
+import { getFreshAttendanceLocation, haversineDistanceMeters, validateFreshAttendanceFix } from "../../utils/attendanceLocation";
 
 import {
-  closeAttendanceSession,
-  createAttendanceSession,
-  getAttendanceSessions,
-  getLiveAttendance,
-  getSessionQr,
-  refreshSessionQr,
-} from "../../services/attendance";
-
-import { getTeacherDashboard } from "../../services/dashboard";
+  closeTenantAttendanceSession,
+  createTenantAttendanceSession,
+  getTenantAttendanceSessions,
+  getTenantLiveAttendance,
+  getTenantSessionQr,
+  getTenantTeacherAssignments,
+  refreshTenantSessionQr,
+} from "../../services/tenantAttendanceSessions";
 import { getApiErrorMessage } from "../../utils/errors";
+import LocationMap from "../../components/LocationMap";
 
 import "./TeacherAttendance.css";
 
@@ -92,12 +97,23 @@ function formatTime(value) {
    ========================================================= */
 
 export default function TeacherAttendance() {
+  const { user, activeCollegeId, collegeMemberships, membershipsLoading } = useAuth();
+  const authenticatedUserId = user?.user_id ?? user?.id;
+  const selectedCollegeMembership = (collegeMemberships || []).find(
+    (membership) => String(membership.college_id) === String(activeCollegeId),
+  );
+  const selectedMembershipIsTeacher = selectedCollegeMembership?.membership_role === "teacher";
+  const requestVersion = useRef(0);
+  const inFlightListRef = useRef(null);
+  const authorizationBlockedScopeRef = useRef(null);
+  const authorizationScopeRef = useRef(`${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`);
   const [sessions, setSessions] = useState([]);
   const [assignments, setAssignments] = useState([]);
 
   const [form, setForm] = useState(
     getDefaultForm
   );
+  const [locationVerificationMode, setLocationVerificationMode] = useState("gps_on");
 
   const [selectedSession, setSelectedSession] =
     useState(null);
@@ -113,29 +129,83 @@ export default function TeacherAttendance() {
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [teacherLocationDiagnostic, setTeacherLocationDiagnostic] = useState(null);
+  const [dataScope, setDataScope] = useState(null);
 
   /* =======================================================
      LOAD PAGE DATA
      ======================================================= */
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (explicitAuthorizationRetry = false) => {
+    const version = ++requestVersion.current;
+    const requestScope = `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+    if (authorizationBlockedScopeRef.current === requestScope && !explicitAuthorizationRetry) {
+      setLoading(false);
+      return;
+    }
+    if (explicitAuthorizationRetry && authorizationBlockedScopeRef.current === requestScope) {
+      authorizationBlockedScopeRef.current = null;
+    }
+    if (membershipsLoading) {
+      setLoading(true);
+      return;
+    }
+    if (!activeCollegeId) {
+      setSessions([]);
+      setAssignments([]);
+      setSelectedSession(null);
+      setLiveRows([]);
+      setQr(null);
+      setDataScope(null);
+      setLoading(false);
+      return [];
+    }
+    if (!selectedMembershipIsTeacher) {
+      setSessions([]);
+      setAssignments([]);
+      setSelectedSession(null);
+      setLiveRows([]);
+      setQr(null);
+      setDataScope(null);
+      setLoading(false);
+      setError("The selected College membership is not a Teacher membership. Ask the College Admin to verify your account's Teacher membership.");
+      return [];
+    }
     setLoading(true);
     setError("");
     try {
-      const [sessionResult, teacherResult] = await Promise.allSettled([
-        getAttendanceSessions(),
-        getTeacherDashboard(),
+      const pending = inFlightListRef.current?.scope === requestScope
+        ? inFlightListRef.current.promise
+        : null;
+      const request = pending || Promise.allSettled([
+        getTenantAttendanceSessions(activeCollegeId, authenticatedUserId, { retryAuthorization: explicitAuthorizationRetry }),
+        getTenantTeacherAssignments(activeCollegeId, authenticatedUserId, { retryAuthorization: explicitAuthorizationRetry }),
       ]);
+      if (!pending) inFlightListRef.current = { scope: requestScope, promise: request };
+      let results;
+      try {
+        results = await request;
+      } finally {
+        if (inFlightListRef.current?.promise === request) inFlightListRef.current = null;
+      }
+      if (version !== requestVersion.current || requestScope !== `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`) return;
+      const [sessionResult, teacherResult] = results;
+      if ([sessionResult, teacherResult].some((result) =>
+        result.status === "rejected" && Number(result.reason?.response?.status) === 403
+      )) authorizationBlockedScopeRef.current = requestScope;
 
+      let sessionRows = [];
       if (sessionResult.status === "fulfilled") {
         const data = sessionResult.value;
         const rows = Array.isArray(data) ? data : Array.isArray(data?.sessions) ? data.sessions : [];
-        setSessions(rows.filter((item) => item && (item.id != null || item.session_id != null)));
+        sessionRows = rows.filter((item) => item && (item.id != null || item.session_id != null));
+        setSessions(sessionRows);
       }
 
       if (teacherResult.status === "fulfilled") {
-        setAssignments(Array.isArray(teacherResult.value?.assignments) ? teacherResult.value.assignments : []);
+        setAssignments(Array.isArray(teacherResult.value) ? teacherResult.value : []);
       }
+      setDataScope(requestScope);
 
       const failures = [];
       if (sessionResult.status === "rejected") {
@@ -145,40 +215,93 @@ export default function TeacherAttendance() {
         failures.push(getErrorMessage(teacherResult.reason, "Teacher assignments could not be loaded."));
       }
       if (failures.length) setError(failures.join(" "));
+      return sessionRows;
     } catch (err) {
-      setError(getErrorMessage(err, "Teacher attendance could not be loaded."));
+      if (version === requestVersion.current && requestScope === `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`) {
+        setError(getErrorMessage(err, "Teacher attendance could not be loaded."));
+        setDataScope(requestScope);
+      }
+      return [];
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, []);
+  }, [activeCollegeId, authenticatedUserId, membershipsLoading, selectedMembershipIsTeacher]);
 
-  const subjects = useMemo(() => {
+  const classes = useMemo(() => {
     const unique = new Map();
-    assignments.forEach((assignment) => {
-      unique.set(assignment.subject_id, {
-        id: assignment.subject_id,
-        name: assignment.subject_name,
+    assignments.filter((assignment) => assignment.is_active !== false).forEach((assignment) => {
+      unique.set(assignment.class_id, {
+        id: assignment.class_id,
+        name: assignment.class_name,
+        section: assignment.section,
+        location_name: assignment.location_name,
+        latitude: assignment.latitude,
+        longitude: assignment.longitude,
+        radius_m: assignment.radius_m,
       });
     });
     return [...unique.values()];
   }, [assignments]);
 
-  const classes = useMemo(() => assignments
-    .filter((assignment) => String(assignment.subject_id) === String(form.subject_id))
+  const subjects = useMemo(() => assignments
+    .filter((assignment) => assignment.is_active !== false)
+    .filter((assignment) => String(assignment.class_id) === String(form.class_id))
     .map((assignment) => ({
-      id: assignment.class_id,
-      name: assignment.class_name,
-      section: assignment.section,
+      id: assignment.subject_id,
+      name: assignment.subject_name,
+      code: assignment.subject_code,
+      semester: assignment.semester,
+      academicYear: assignment.academic_year,
     }))
-    .filter((classItem, index, list) => list.findIndex((item) => item.id === classItem.id) === index),
-  [assignments, form.subject_id]);
+    .filter((subject, index, list) => list.findIndex((item) => String(item.id) === String(subject.id)) === index),
+  [assignments, form.class_id]);
+
+  const selectedClass = useMemo(
+    () => classes.find((item) => String(item.id) === String(form.class_id)) || null,
+    [classes, form.class_id],
+  );
+  const classLocationConfigured = (() => {
+    const latitude = selectedClass?.latitude;
+    const longitude = selectedClass?.longitude;
+    const radius = Number(selectedClass?.radius_m);
+    return latitude != null
+      && longitude != null
+      && Number.isFinite(Number(latitude))
+      && Number.isFinite(Number(longitude))
+      && Number(latitude) >= -90
+      && Number(latitude) <= 90
+      && Number(longitude) >= -180
+      && Number(longitude) <= 180
+      && Number.isFinite(radius)
+      && radius > 0;
+  })();
+
+  const selectedAssignmentIsValid = assignments.some((assignment) =>
+    assignment.is_active !== false
+    && String(assignment.class_id) === String(form.class_id)
+    && String(assignment.subject_id) === String(form.subject_id)
+  );
 
   /* =======================================================
      INITIAL LOAD
      ======================================================= */
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const scope = `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+    if (authorizationScopeRef.current !== scope) {
+      authorizationScopeRef.current = scope;
+      authorizationBlockedScopeRef.current = null;
+      inFlightListRef.current = null;
+    }
+    setSessions([]);
+    setAssignments([]);
+    setSelectedSession(null);
+    setLiveRows([]);
+    setQr(null);
+    setDataScope(null);
+    setLoading(true);
     load();
+    return () => { requestVersion.current += 1; };
   }, [load]);
 
   /* =======================================================
@@ -192,11 +315,17 @@ export default function TeacherAttendance() {
     }
 
     let active = true;
+    let polling = false;
+    let authorizationDenied = false;
+    let timer = null;
 
     const poll = async () => {
+      if (!active || polling || authorizationDenied) return;
+      polling = true;
       try {
-        const rows = await getLiveAttendance(
-          selectedSession.id
+        const rows = await getTenantLiveAttendance(
+          selectedSession.id,
+          activeCollegeId,
         );
 
         if (!active) {
@@ -219,12 +348,18 @@ export default function TeacherAttendance() {
             "Unable to refresh live attendance."
           )
         );
+        if (Number(err?.response?.status) === 403) {
+          authorizationDenied = true;
+          if (timer != null) window.clearInterval(timer);
+        }
+      } finally {
+        polling = false;
       }
     };
 
     poll();
 
-    const timer = window.setInterval(
+    timer = window.setInterval(
       poll,
       5000
     );
@@ -233,7 +368,7 @@ export default function TeacherAttendance() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [selectedSession]);
+  }, [selectedSession, activeCollegeId, authenticatedUserId]);
 
   /* =======================================================
      DERIVED COUNTS
@@ -276,14 +411,20 @@ export default function TeacherAttendance() {
 
     setError("");
     setNotice("");
-
-    if (!form.subject_id) {
-      setError("Please select a subject.");
-      return;
-    }
+    setTeacherLocationDiagnostic(null);
 
     if (!form.class_id) {
       setError("Please select a class.");
+      return;
+    }
+
+    if (!form.subject_id || !selectedAssignmentIsValid) {
+      setError("Select a subject assigned to the selected class.");
+      return;
+    }
+
+    if (locationVerificationMode === "gps_on" && !classLocationConfigured) {
+      setError("The College Admin must configure valid classroom coordinates and a positive geofence radius for this class before a lecture can start.");
       return;
     }
 
@@ -319,30 +460,65 @@ export default function TeacherAttendance() {
       return;
     }
 
-    const radius = Number(form.radius_m);
+    const radius = Number(selectedClass?.radius_m ?? 100);
 
-    if (
+    if (locationVerificationMode === "gps_on" && (
       !Number.isFinite(radius) ||
       radius < 10 ||
       radius > 5000
-    ) {
+    )) {
       setError(
         "Geo-fence radius must be between 10 and 5000 metres."
       );
       return;
     }
 
+
+
     try {
       setSaving(true);
+      const collegeId = Number(activeCollegeId);
+      const classId = Number(form.class_id);
+      const subjectId = Number(form.subject_id);
+      if (![collegeId, classId, subjectId].every((value) => Number.isSafeInteger(value) && value > 0)) {
+        throw new Error("The selected College, Class, or Subject is no longer valid. Refresh assignments and retry.");
+      }
+
+      let teacherFix = null;
+      if (locationVerificationMode === "gps_on") {
+        const collegeProfile = await getTenantCollegeProfile(activeCollegeId);
+        const accuracyLimit = Number(collegeProfile?.gps_accuracy_limit_m);
+        if (!Number.isInteger(accuracyLimit) || accuracyLimit < 1 || accuracyLimit > 150) {
+          throw new Error("College GPS accuracy setting is unavailable or invalid. Contact your College Admin.");
+        }
+        const capturedFix = await getFreshAttendanceLocation(
+          navigator.geolocation,
+          accuracyLimit,
+          { requireStableFix: true },
+        );
+        teacherFix = validateFreshAttendanceFix(capturedFix, accuracyLimit);
+        setTeacherLocationDiagnostic({
+          className: selectedClass.name,
+          locationName: selectedClass.location_name,
+          classLatitude: Number(selectedClass.latitude),
+          classLongitude: Number(selectedClass.longitude),
+          radiusM: radius,
+          teacherLatitude: teacherFix.latitude,
+          teacherLongitude: teacherFix.longitude,
+          accuracyM: teacherFix.accuracy,
+          distanceM: haversineDistanceMeters(
+            selectedClass.latitude,
+            selectedClass.longitude,
+            teacherFix.latitude,
+            teacherFix.longitude,
+          ),
+        });
+      }
 
       const payload = {
-        subject_id: Number(
-          form.subject_id
-        ),
+        subject_id: subjectId,
 
-        class_id: Number(
-          form.class_id
-        ),
+        class_id: classId,
 
         title: form.title.trim(),
 
@@ -351,29 +527,29 @@ export default function TeacherAttendance() {
 
         ends_at:
           endDate.toISOString(),
-
-        latitude:
-          form.latitude === ""
-            ? null
-            : Number(form.latitude),
-
-        longitude:
-          form.longitude === ""
-            ? null
-            : Number(form.longitude),
-
-        radius_m: radius,
+        location_verification_mode: locationVerificationMode,
+        ...(locationVerificationMode === "gps_on" ? {
+          radius_m: radius,
+          teacher_latitude: teacherFix.latitude,
+          teacher_longitude: teacherFix.longitude,
+          teacher_accuracy_m: teacherFix.accuracy,
+        } : {}),
       };
 
       const created =
-        await createAttendanceSession(
-          payload
+        await createTenantAttendanceSession(
+          payload,
+          collegeId,
         );
 
       const session = created?.session || created;
       const sessionId = session?.id ?? session?.session_id;
       if (!sessionId || !Number.isFinite(Number(sessionId))) {
         throw new Error("The server created a response without a valid session ID. Refresh the session list before retrying.");
+      }
+      const expectedLocationStatus = locationVerificationMode === "gps_on" ? "verified" : "not_verified";
+      if (session.location_verification_status !== expectedLocationStatus) {
+        throw new Error("The server did not confirm the requested location-verification status. Refresh sessions and contact your administrator before retrying.");
       }
       const usableSession = { ...session, id: Number(sessionId) };
 
@@ -389,10 +565,10 @@ export default function TeacherAttendance() {
 
       setForm(getDefaultForm());
 
-      void load();
+      void load(true);
 
       try {
-        const qrData = await getSessionQr(usableSession.id);
+        const qrData = await getTenantSessionQr(usableSession.id, activeCollegeId);
         setQr(qrData);
         setNotice("Attendance session created. Dynamic QR is ready.");
       } catch (qrError) {
@@ -425,8 +601,9 @@ export default function TeacherAttendance() {
       setQr(null);
 
       const data =
-        await getSessionQr(
-          session.id
+        await getTenantSessionQr(
+          session.id,
+          activeCollegeId,
         );
 
       setQr(data);
@@ -457,8 +634,9 @@ export default function TeacherAttendance() {
       setNotice("");
 
       const data =
-        await refreshSessionQr(
-          selectedSession.id
+        await refreshTenantSessionQr(
+          selectedSession.id,
+          activeCollegeId,
         );
 
       setQr(data);
@@ -501,8 +679,9 @@ export default function TeacherAttendance() {
       setError("");
       setNotice("");
 
-      await closeAttendanceSession(
-        selectedSession.id
+      await closeTenantAttendanceSession(
+        selectedSession.id,
+        activeCollegeId,
       );
 
       setNotice(
@@ -511,10 +690,7 @@ export default function TeacherAttendance() {
 
       setQr(null);
 
-      await load();
-
-      const updatedSessions =
-        await getAttendanceSessions();
+      const updatedSessions = await load(true);
 
       const updated =
         Array.isArray(updatedSessions)
@@ -544,80 +720,24 @@ export default function TeacherAttendance() {
   };
 
   /* =======================================================
-     USE CURRENT LOCATION
-     ======================================================= */
-
-  const useCurrentLocation = () => {
-    setError("");
-    setNotice("");
-
-    if (!navigator.geolocation) {
-      setError(
-        "Geolocation is not available in this browser."
-      );
-
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude =
-          position.coords.latitude.toFixed(
-            7
-          );
-
-        const longitude =
-          position.coords.longitude.toFixed(
-            7
-          );
-
-        setForm((current) => ({
-          ...current,
-          latitude,
-          longitude,
-        }));
-
-        setNotice(
-          "Classroom location captured. Geo-fence will be checked during attendance."
-        );
-      },
-      (geoError) => {
-        let message =
-          "Location permission was denied. You can still create a session without a geo-fence.";
-
-        if (
-          geoError?.code ===
-          geoError.PERMISSION_DENIED
-        ) {
-          message =
-            "Location permission was denied. You can still create a session without a geo-fence.";
-        } else if (
-          geoError?.code ===
-          geoError.POSITION_UNAVAILABLE
-        ) {
-          message =
-            "Your current location is unavailable. You can still create a session without a geo-fence.";
-        } else if (
-          geoError?.code ===
-          geoError.TIMEOUT
-        ) {
-          message =
-            "Location request timed out. You can still create a session without a geo-fence.";
-        }
-
-        setError(message);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-  };
-
-  /* =======================================================
      RENDER
      ======================================================= */
+
+  if (!activeCollegeId || dataScope !== `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`) {
+    return (
+      <main className="teacher-attendance-page">
+        <div className="ta-alert" role={membershipsLoading || (activeCollegeId && selectedMembershipIsTeacher) ? "status" : "alert"}>
+          {membershipsLoading
+            ? "Checking your College memberships…"
+            : !activeCollegeId
+            ? "Select an active College membership to use attendance sessions."
+            : !selectedMembershipIsTeacher
+              ? "The selected College membership is not a Teacher membership. Ask the College Admin to verify your account's Teacher membership."
+              : "Loading the selected College attendance workspace…"}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="teacher-attendance-page">
@@ -658,6 +778,9 @@ export default function TeacherAttendance() {
           role="alert"
         >
           {error}
+          <button type="button" className="ta-retry-button" onClick={() => load(true)} disabled={loading}>
+            Retry attendance data
+          </button>
         </div>
       )}
 
@@ -667,6 +790,12 @@ export default function TeacherAttendance() {
           role="status"
         >
           {notice}
+        </div>
+      )}
+
+      {!loading && !error && classes.length === 0 && (
+        <div className="ta-alert" role="status">
+          No active Class and Subject assignments are available. Ask your College Admin to assign an active Class and Subject before starting attendance.
         </div>
       )}
 
@@ -694,6 +823,59 @@ export default function TeacherAttendance() {
             onSubmit={handleCreate}
             className="ta-form"
           >
+            {/* CLASS */}
+
+            <label>
+              <span>
+                Class
+              </span>
+
+              <select
+                value={form.class_id}
+                onChange={(event) => {
+                  setTeacherLocationDiagnostic(null);
+                  setForm((current) => {
+                    const selectedClass = classes.find((item) => String(item.id) === event.target.value);
+                    return {
+                      ...current,
+                      class_id: event.target.value,
+                      subject_id: "",
+                      latitude: selectedClass?.latitude == null ? "" : String(selectedClass.latitude),
+                      longitude: selectedClass?.longitude == null ? "" : String(selectedClass.longitude),
+                      radius_m: selectedClass?.radius_m == null ? 100 : Number(selectedClass.radius_m),
+                    };
+                  });
+                }}
+                required
+              >
+                <option value="">
+                  Select class
+                </option>
+
+                {classes.map(
+                  (classItem) => (
+                    <option
+                      key={
+                        classItem.id
+                      }
+                      value={
+                        classItem.id
+                      }
+                    >
+                      {classItem.name}{classItem.section ? ` · ${classItem.section}` : ""}
+
+                    </option>
+                  )
+                )}
+              </select>
+            </label>
+
+            {form.class_id && !loading && subjects.length === 0 && (
+              <div className="ta-alert full" role="status">
+                No active Subject is assigned to this Class. Ask your College Admin to review the Teacher assignment.
+              </div>
+            )}
+
             {/* SUBJECT */}
 
             <label>
@@ -702,17 +884,12 @@ export default function TeacherAttendance() {
               </span>
 
               <select
-                value={
-                  form.subject_id
-                }
+                value={form.subject_id}
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    subject_id: event.target.value,
-                    class_id: "",
-                  }))
+                  setForm((current) => ({ ...current, subject_id: event.target.value }))
                 }
                 required
+                disabled={!form.class_id || subjects.length === 0}
               >
                 <option value="">
                   Select subject
@@ -729,51 +906,12 @@ export default function TeacherAttendance() {
                       }
                     >
                       {subject.name}
+                      {subject.code ? ` (${subject.code})` : ""}
+                      {subject.semester != null ? ` · Semester ${subject.semester}` : ""}
+                      {subject.academicYear ? ` · ${subject.academicYear}` : ""}
 
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            {/* CLASS */}
-
-            <label>
-              <span>
-                Class
-              </span>
-
-              <select
-                value={
-                  form.class_id
-                }
-                onChange={(event) =>
-                  updateForm(
-                    "class_id",
-                    event.target.value
-                  )
-                }
-                required
-                disabled={!form.subject_id || classes.length === 0}
-              >
-                <option value="">
-                  Select class
-                </option>
-
-                {classes.map(
-                  (classItem) => (
-                    <option
-                      key={
-                        classItem.id
-                      }
-                      value={
-                        classItem.id
-                      }
-                    >
-                      {classItem.name}
-
-                      {classItem.section
-                        ? ` • ${classItem.section}`
+                      {selectedClass?.section
+                        ? ` · ${selectedClass.section}`
                         : ""}
                     </option>
                   )
@@ -850,6 +988,33 @@ export default function TeacherAttendance() {
               />
             </label>
 
+            <fieldset className="ta-location-verification full" disabled={saving}>
+              <legend>GPS Verification: {locationVerificationMode === "gps_on" ? "ON" : "OFF"}</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="location-verification-mode"
+                  value="gps_on"
+                  checked={locationVerificationMode === "gps_on"}
+                  onChange={() => setLocationVerificationMode("gps_on")}
+                />
+                GPS Verification: ON (verify classroom presence)
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="location-verification-mode"
+                  value="gps_off"
+                  checked={locationVerificationMode === "gps_off"}
+                  onChange={() => setLocationVerificationMode("gps_off")}
+                />
+                GPS Verification: OFF (start without location check)
+              </label>
+              {locationVerificationMode === "gps_off" && (
+                <p role="status">Location verification is OFF. Classroom presence has not been verified. Student face matching and all session, membership, assignment, and duplicate-attendance checks remain required. QR attendance still requires GPS.</p>
+              )}
+            </fieldset>
+
             {/* GEO-FENCE */}
 
             <div className="location-row full">
@@ -866,16 +1031,19 @@ export default function TeacherAttendance() {
                 </span>
               </div>
 
-              <button
-                type="button"
-                className="secondary"
-                onClick={
-                  useCurrentLocation
-                }
-              >
-                Use my location
-              </button>
+              <span role="status">
+                {locationVerificationMode === "gps_off"
+                  ? "GPS verification will not run for this session"
+                  : classLocationConfigured ? "Configured by College Admin" : "College Admin setup required"}
+              </span>
             </div>
+            {teacherLocationDiagnostic && <div className="ta-location-diagnostic full" role="status">
+              <strong>Location check details (distance estimate is informational; server validation is authoritative)</strong>
+              <span>Selected Class: {teacherLocationDiagnostic.className}{teacherLocationDiagnostic.locationName ? ` · ${teacherLocationDiagnostic.locationName}` : ""}</span>
+              <span>Saved classroom point: {teacherLocationDiagnostic.classLatitude.toFixed(6)}, {teacherLocationDiagnostic.classLongitude.toFixed(6)} · Radius {teacherLocationDiagnostic.radiusM} m</span>
+              <span>Fresh Teacher device fix: {teacherLocationDiagnostic.teacherLatitude.toFixed(6)}, {teacherLocationDiagnostic.teacherLongitude.toFixed(6)} · Reported accuracy ±{teacherLocationDiagnostic.accuracyM.toFixed(1)} m</span>
+              <span>Estimated distance to saved classroom point: {teacherLocationDiagnostic.distanceM == null ? "unavailable" : `${teacherLocationDiagnostic.distanceM.toFixed(1)} m`}</span>
+            </div>}
 
             {/* RADIUS */}
 
@@ -892,6 +1060,7 @@ export default function TeacherAttendance() {
                 value={
                   form.radius_m
                 }
+                disabled
                 onChange={(event) =>
                   updateForm(
                     "radius_m",
@@ -899,14 +1068,29 @@ export default function TeacherAttendance() {
                   )
                 }
               />
+              <small>{locationVerificationMode === "gps_off"
+                ? "The saved College Admin radius remains authoritative for QR attendance. GPS-off sessions do not verify the Teacher's classroom presence."
+                : classLocationConfigured
+                ? "The College Admin configured this classroom location and radius; they will be used for this session."
+                : "Ask the College Admin to configure valid classroom coordinates and a geofence radius before starting a lecture."}</small>
             </label>
+
+            <div className="full ta-session-location-map">
+              <LocationMap
+                latitude={form.latitude === "" ? null : Number(form.latitude)}
+                longitude={form.longitude === "" ? null : Number(form.longitude)}
+                radiusM={Number(form.radius_m) || 100}
+                locationName={classes.find((item) => String(item.id) === String(form.class_id))?.location_name || "Classroom"}
+              />
+              <small>Configured classroom GIS location and attendance boundary. This map does not verify the Teacher when GPS is off; QR attendance still checks GPS on the server.</small>
+            </div>
 
             {/* CREATE */}
 
             <div className="ta-form-actions full">
               <button
                 className="primary"
-                disabled={saving}
+                disabled={saving || !selectedAssignmentIsValid}
                 type="submit"
               >
                 {saving
@@ -991,6 +1175,13 @@ export default function TeacherAttendance() {
                           )}
                         </small>
                       )}
+                      <small className={`location-verification-status ${session.location_verification_status || "unknown"}`}>
+                        {session.location_verification_status === "verified"
+                          ? "Location verified"
+                          : session.location_verification_status === "not_verified"
+                            ? "Location not verified"
+                            : "Location status unavailable"}
+                      </small>
                     </div>
 
                     <em
@@ -1079,6 +1270,24 @@ export default function TeacherAttendance() {
                   "unknown"}
               </strong>
             </div>
+          </div>
+
+          <p className={`ta-location-verification-result ${selectedSession.location_verification_status || "unknown"}`} role="status">
+            {selectedSession.location_verification_status === "verified"
+              ? "Teacher classroom location was verified when this session started."
+              : selectedSession.location_verification_status === "not_verified"
+                ? "Teacher classroom location was not verified when this session started."
+                : "Teacher location-verification status is unavailable for this session."}
+          </p>
+
+          <div className="ta-session-location-map">
+            <LocationMap
+              latitude={selectedSession.latitude}
+              longitude={selectedSession.longitude}
+              radiusM={Number(selectedSession.radius_m) || 100}
+              locationName={selectedSession.location_name || selectedSession.class_name || "Classroom"}
+            />
+            <small>Map is informational. Attendance is decided by server-side GPS and geofence validation.</small>
           </div>
 
           <div className="live-layout">

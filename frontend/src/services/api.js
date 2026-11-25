@@ -1,10 +1,19 @@
 ﻿import axios from "axios";
-import { getApiErrorMessage } from "../utils/errors";
+import { getApiErrorMessage } from "../utils/errors.js";
+import { resolveApiBaseUrl } from "./apiBaseUrl.js";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://127.0.0.1:8000";
+const API_ENV = import.meta.env || {};
+let API_BASE_URL;
+if (import.meta.env?.DEV !== false) {
+  API_BASE_URL = resolveApiBaseUrl(
+    { ...API_ENV, DEV: true },
+    { developmentDefault: "http://127.0.0.1:8000" },
+  );
+} else {
+  // Keep production resolution in its own statically selected branch so Vite
+  // removes the development loopback URL from production bundles entirely.
+  API_BASE_URL = resolveApiBaseUrl({ ...API_ENV, DEV: false });
+}
 
 export const TOKEN_KEY = "attendx_token";
 
@@ -19,9 +28,14 @@ const api = axios.create({
 // Har request ke saath token bhejein, agar available ho.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem(TOKEN_KEY);
+    const preserveAuthorization = config.preserveAuthorization === true;
+    delete config.preserveAuthorization;
+    const token = config.skipAuth === true || preserveAuthorization ? null : localStorage.getItem(TOKEN_KEY);
 
-    if (token) {
+    if (preserveAuthorization) {
+      // A narrowly scoped caller supplied an explicit token (session restore).
+      // Preserve it so an account switch cannot replace it with localStorage's token.
+    } else if (token) {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     } else if (config.headers?.Authorization) {

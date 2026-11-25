@@ -1,0 +1,22 @@
+﻿# Build context is the repository root; keep secrets, local data and backups out.
+.git/
+.venv/
+.venv-face-test/
+backend/.env
+backend/venv/
+backend/.venv/
+backend/attendx.db
+backend/**/*.db
+backend/**/__pycache__/
+frontend/.env
+frontend/node_modules/
+frontend/dist/
+**/node_modules/
+**/.pytest_cache/
+**/__pycache__/
+backup*/
+*_backup*/
+face-integration-backup/
+gis-integration-backup/
+docs/
+*.log

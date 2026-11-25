@@ -116,7 +116,7 @@
 
 .td-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 13px;
   margin-bottom: 17px;
 }
@@ -617,6 +617,32 @@
     text-overflow: ellipsis;
   }
 }
+
+/* Teaching workspace hero: operational snapshot, without duplicating controls. */
+.td-welcome { display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"copy actions" "snapshot snapshot";align-items:center;gap:20px 24px;padding:clamp(22px,3vw,32px);border:1px solid #27395a;border-radius:20px;color:#fff;background:radial-gradient(ellipse at 85% 0%,rgba(121,106,229,.27),transparent 42%),linear-gradient(112deg,#172642 0%,#202e4d 68%,#28385b 100%);box-shadow:0 18px 38px rgba(24,38,68,.13); }
+.td-welcome>div:first-child { grid-area:copy; }
+.td-welcome .td-eyebrow { color:#bbb7ff;letter-spacing:.16em; }
+.td-welcome h2 { color:#fff;letter-spacing:-.045em; }
+.td-welcome p { color:#c6cfdf; }
+.td-updated { color:#aeb9cc; }
+.td-welcome-actions { grid-area:actions; }
+.td-welcome-actions .td-quiet-button { border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#f0f2fa; }
+.td-workspace-snapshot { grid-area:snapshot;display:flex;align-items:center;gap:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.13); }
+.td-snapshot-kicker { display:inline-flex;align-items:center;gap:7px;color:#bbb7ff;font-size:8px;font-weight:850;letter-spacing:.14em;white-space:nowrap; }
+.td-snapshot-values { display:flex;align-items:center;gap:17px; }
+.td-snapshot-values>div { display:grid;gap:2px; }
+.td-snapshot-values strong { color:#fff;font-size:20px;letter-spacing:-.04em; }
+.td-snapshot-values span { color:#c6cfdf;font-size:9px; }
+.td-snapshot-values i { width:1px;height:26px;background:rgba(255,255,255,.18); }
+.td-workspace-snapshot>small { margin-left:auto;color:#aeb9cc;font-size:9px; }
+.td-kpi-card,.td-card { border-radius:16px; }
+.td-main-grid { grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr); }
+.td-head { padding-bottom:13px;border-bottom:1px solid #edf0f5; }
+.td-head h3 { color:#192744;letter-spacing:-.025em; }
+.td-recent-card { margin-top:16px; }
+@media(max-width:900px){.td-main-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.td-welcome{grid-template-columns:1fr;grid-template-areas:"copy" "actions" "snapshot";gap:17px;padding:21px}.td-welcome-actions{width:100%}.td-workspace-snapshot{align-items:flex-start;flex-wrap:wrap;gap:12px}.td-workspace-snapshot>small{width:100%;margin-left:0}}
+@media(max-width:420px){.td-snapshot-values{gap:11px}.td-snapshot-values strong{font-size:18px}.td-snapshot-values span{font-size:8px}}
 
 @media (max-width: 480px) {
   .td-kpis {

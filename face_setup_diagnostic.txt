@@ -1,0 +1,48 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261027162038
+Username: LAPTOP-G6VAKMU3\Asus
+RunAs User: LAPTOP-G6VAKMU3\Asus
+Configuration Name: 
+Machine: LAPTOP-G6VAKMU3 (Microsoft Windows NT 10.0.26300.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -noexit -command try { . "c:\Users\Asus\AppData\Local\Programs\Microsoft VS Code\e646868227\resources\app\out\vs\workbench\contrib\terminal\common\scripts\shellIntegration.ps1" } catch {}
+Process ID: 21344
+PSVersion: 5.1.26100.9549
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9549
+BuildVersion: 10.0.26100.9549
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\face_setup_diagnostic.txt
+
+========== ATTENDX FACE SETUP DIAGNOSTIC ==========
+
+Python executable: C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\.venv\Scripts\python.exe
+
+
+--- OpenCV API check ---
+
+
+--- NumPy check ---
+
+
+--- Model files check ---
+[MISSING] C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models\face\face_detection_yunet_2023mar.onnx
+[MISSING] C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backend\app\models\face\face_recognition_sface_2021dec.onnx
+
+--- Internet/model download check ---
+[HTTP 200] https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+[HTTP 200] https://github.com/opencv/opencv_zoo/raw/refs/heads/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+
+--- Previous patch/backup files ---
+
+
+--- Current face engine ---
+[MISSING] face_engine.py
+**********************
+Windows PowerShell transcript end
+End time: 20261027162042
+**********************

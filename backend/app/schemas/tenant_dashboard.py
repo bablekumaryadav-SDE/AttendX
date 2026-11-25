@@ -1,0 +1,61 @@
+"""Strict aggregate responses for the College Admin dashboard."""
+
+from pydantic import BaseModel, ConfigDict
+
+
+class TenantAttendanceTrendPoint(BaseModel):
+    period: str
+    records: int
+    present: int
+    late: int
+    absent: int
+    unclassified: int
+    presence_rate_percent: float | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TenantEntityCounts(BaseModel):
+    total: int
+    active: int
+    inactive: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TenantDashboardSummary(BaseModel):
+    college_name: str
+    students: TenantEntityCounts
+    teachers: TenantEntityCounts
+    classes: TenantEntityCounts
+    subjects: TenantEntityCounts
+    face_registered_count: int
+    face_not_registered_count: int
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TenantAttendanceSummary(BaseModel):
+    legacy_attendance_rows: int
+    attendance_record_rows: int
+    verified_attendance_event_rows: int
+    verified_present_events: int
+    verified_late_events: int
+    verified_absent_events: int
+    verified_unclassified_events: int
+    verified_classified_events_denominator: int
+    verified_presence_rate_percent: float | None
+    present_records: int
+    late_records: int
+    absent_records: int
+    unclassified_status_records: int
+    classified_records_denominator: int
+    recorded_presence_rate_percent: float | None
+    trend_available: bool
+    trend_start_date: str | None
+    trend_partial: bool
+    trend_excluded_records: int
+    trends: list[TenantAttendanceTrendPoint]
+    trend_unavailable_reason: str
+
+    model_config = ConfigDict(extra="forbid")

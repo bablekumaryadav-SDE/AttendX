@@ -134,26 +134,10 @@ class IsolatedNotificationApiTests(unittest.TestCase):
         app.dependency_overrides.clear()
         self.engine.dispose()
 
-    def test_history_and_read_updates_are_owner_scoped(self):
+    def test_legacy_notification_history_and_read_are_default_denied(self):
         response = self.client.get("/notifications/history")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([row["title"] for row in response.json()], ["Mine"])
-        own_id = response.json()[0]["id"]
-        with self.engine.connect() as connection:
-            other_id = connection.execute(
-                text("SELECT id FROM notification_events WHERE user_id = 2")
-            ).scalar_one()
-        self.assertEqual(self.client.post(f"/notifications/{own_id}/read").status_code, 200)
-        self.assertEqual(self.client.post(f"/notifications/{other_id}/read").status_code, 404)
-        with self.engine.connect() as connection:
-            own_read_at = connection.execute(
-                text("SELECT read_at FROM notification_events WHERE id = :id"), {"id": own_id}
-            ).scalar_one()
-            other_read_at = connection.execute(
-                text("SELECT read_at FROM notification_events WHERE id = :id"), {"id": other_id}
-            ).scalar_one()
-        self.assertIsNotNone(own_read_at)
-        self.assertIsNone(other_read_at)
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json(), {"detail": "This business API is unavailable until College-scoped authorization is enabled."})
 
     def test_sqlite_migration_is_repeatable_and_deduplicates_events(self):
         with self.engine.begin() as connection:
@@ -203,27 +187,25 @@ class LegacyAccessScopeTests(unittest.TestCase):
             "sub": str(user_id), "id": user_id, "email": email, "role": role,
         }
 
-    def test_legacy_attendance_reads_are_scoped_to_the_signed_in_profile(self):
+    def test_legacy_attendance_reads_are_default_denied(self):
         self._as_user(1, "one@example.test", "student")
         response = self.client.get("/attendance/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([row["id"] for row in response.json()], [100])
-        self.assertEqual(self.client.get("/attendance/101").status_code, 404)
-        self._as_user(20, "teacher1@example.test", "teacher")
-        response = self.client.get("/attendance/")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual([row["id"] for row in response.json()], [100])
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json(), {"detail": "College-scoped attendance history is unavailable."})
 
-    def test_teacher_cannot_create_attendance_for_another_teacher(self):
+    def test_legacy_teacher_attendance_write_is_default_denied(self):
         self._as_user(20, "teacher1@example.test", "teacher")
         response = self.client.post("/attendance/", json={
             "student_id": 2, "teacher_id": 11, "date": "2026-11-03", "status": "present",
         })
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"detail": "This business API is unavailable until College-scoped authorization is enabled."})
 
     def test_student_cannot_list_the_private_student_directory(self):
         self._as_user(1, "one@example.test", "student")
-        self.assertEqual(self.client.get("/students/").status_code, 403)
+        response = self.client.get("/students/")
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertNotIn("Student One", response.text)
 
 
 if __name__ == "__main__":

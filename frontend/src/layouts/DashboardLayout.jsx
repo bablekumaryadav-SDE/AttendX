@@ -3,8 +3,9 @@ import React, {
   useMemo,
   useState,
   useCallback,
+  useEffect,
 } from "react";
-import { Bell } from "lucide-react";
+import { Activity, Bell, BookOpen, CalendarCheck, ChevronLeft, ChevronRight, ClipboardList, FileText, GraduationCap, LayoutDashboard, MessagesSquare, Settings, UserRound, Users } from "lucide-react";
 
 import {
   NavLink,
@@ -14,24 +15,76 @@ import {
 } from "react-router-dom";
 
 import { useAuth } from "../context/AuthContext";
+import { getTenantUnreadNotificationCount } from "../services/tenantNotifications";
+import { tenantViewKey } from "../services/tenantSelection";
+import "./DashboardLayout.css";
+
+const NAV_ICONS = {
+  Home: <LayoutDashboard size={18} />,
+  Overview: <LayoutDashboard size={18} />,
+  Students: <GraduationCap size={18} />,
+  Teachers: <Users size={18} />,
+  Attendance: <CalendarCheck size={18} />,
+  "Attendance & History": <CalendarCheck size={18} />,
+  Classes: <Activity size={18} />,
+  Subjects: <BookOpen size={18} />,
+  "My Subjects": <BookOpen size={18} />,
+  "My Classes": <Users size={18} />,
+  "Subject Assignments": <ClipboardList size={18} />,
+  "Parents & Notifications": <MessagesSquare size={18} />,
+  "Reports & Analytics": <FileText size={18} />,
+  Settings: <Settings size={18} />,
+  Profile: <UserRound size={18} />,
+};
 
 function DashboardLayout() {
-  const { user, logout, loading } = useAuth();
+  const {
+    user, logout, loading, collegeMemberships, membershipsLoading,
+    membershipsError, reloadMemberships, activeCollegeId, selectCollege,
+  } = useAuth();
 
   const navigate = useNavigate();
   const location = useLocation();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(null);
 
   const role = String(user?.role || "")
     .trim()
     .toLowerCase();
 
+  useEffect(() => {
+    let active = true;
+    const loadUnreadCount = async () => {
+      if (!activeCollegeId) {
+        setUnreadNotifications(null);
+        return;
+      }
+      try {
+        const response = await getTenantUnreadNotificationCount(activeCollegeId);
+        if (active && Number.isSafeInteger(response?.unread_count)) {
+          setUnreadNotifications(response.unread_count);
+        }
+      } catch {
+        if (active) setUnreadNotifications(null);
+      }
+    };
+    const refreshUnreadCount = () => { void loadUnreadCount(); };
+    refreshUnreadCount();
+    window.addEventListener("attendx:notifications-updated", refreshUnreadCount);
+    return () => {
+      active = false;
+      window.removeEventListener("attendx:notifications-updated", refreshUnreadCount);
+    };
+  }, [activeCollegeId]);
+
   // Role-based workspace name
   const roleLabel = useMemo(() => {
     const labels = {
       admin: "Administrator",
+      college_admin: "College Admin",
       teacher: "Teacher",
       student: "Student",
     };
@@ -39,49 +92,22 @@ function DashboardLayout() {
     return labels[role] || "User";
   }, [role]);
 
-  // Sidebar navigation: only use routes configured in AppRoutes.jsx
+  // College Admin navigation mirrors the reviewed tenant workspace.
   const navigation = useMemo(() => {
-    if (role === "admin") {
+    if (role === "admin" || role === "college_admin") {
       return [
-        { label: "Home", path: "/", icon: "⌂" },
-        {
-          label: "Overview",
-          path: "/admin",
-          icon: "⌂",
-        },
-        {
-          label: "Attendance",
-          path: "/admin/attendance",
-          icon: "✓",
-        },
-        {
-          label: "Students",
-          path: "/admin/students",
-          icon: "◉",
-        },
-        {
-          label: "Teachers",
-          path: "/admin/teachers",
-          icon: "♙",
-        },
-        {
-          label: "Classes",
-          path: "/admin/classes",
-          icon: "▦",
-        },
-        {
-          label: "Subjects & Assignments",
-          path: "/admin/subjects",
-          icon: "S",
-        },
-        {
-          label: "Reports",
-          path: "/admin/reports",
-          icon: "▤",
-        },
+        { label: "Overview", path: "/admin" },
+        { label: "Students", path: "/admin/students" },
+        { label: "Teachers", path: "/admin/teachers" },
+        { label: "Attendance", path: "/admin/attendance" },
+        { label: "Classes", path: "/admin/classes" },
+        { label: "Subjects", path: "/admin/subjects" },
+        { label: "Parents & Notifications", path: "/admin/parents-notifications" },
+        { label: "Notifications", path: "/admin/notifications" },
+        { label: "Reports & Analytics", path: "/admin/reports" },
+        { label: "Settings", path: "/admin/settings" },
       ];
     }
-
     if (role === "teacher") {
       return [
         { label: "Home", path: "/", icon: "⌂" },
@@ -91,15 +117,28 @@ function DashboardLayout() {
           icon: "⌂",
         },
         {
+          label: "My Classes",
+          path: "/teacher#my-classes",
+          icon: "C",
+        },
+        {
+          label: "Subject Assignments",
+          path: "/teacher#subject-assignments",
+          icon: "S",
+        },
+        {
+          label: "My Subjects",
+          path: "/teacher#my-subjects",
+          icon: "B",
+        },
+        {
           label: "Attendance",
           path: "/teacher/attendance",
           icon: "✓",
         },
-        {
-          label: "Reports",
-          path: "/teacher/reports",
-          icon: "▤",
-        },
+        { label: "Reports", path: "/teacher/reports" },
+        { label: "Notifications", path: "/teacher/notifications" },
+        { label: "Profile", path: "/teacher/profile" },
       ];
     }
 
@@ -116,6 +155,9 @@ function DashboardLayout() {
           path: "/student/attendance",
           icon: "◷",
         },
+        { label: "Reports", path: "/student/reports" },
+        { label: "Notifications", path: "/student/notifications" },
+        { label: "Profile", path: "/student/profile" },
       ];
     }
 
@@ -126,13 +168,16 @@ function DashboardLayout() {
   const pageTitle = useMemo(() => {
     const currentPath = location.pathname.replace(/\/+$/, "") || "/";
 
+    if (currentPath === "/teacher" && location.hash === "#subject-assignments") return "Subject Assignments";
+    if (currentPath === "/teacher" && location.hash === "#my-subjects") return "My Subjects";
+
     const currentItem = navigation.find(
       (item) => item.path === currentPath
     );
 
     if (currentItem) {
       return currentItem.label === "Overview"
-        ? "Dashboard"
+        ? (role === "college_admin" || role === "admin" ? "College Overview" : "Dashboard")
         : currentItem.label;
     }
 
@@ -177,7 +222,7 @@ function DashboardLayout() {
     }
 
     return "Dashboard";
-  }, [navigation, location.pathname]);
+  }, [navigation, location.pathname, location.hash, role]);
 
   // Logout
   const handleLogout = useCallback(async () => {
@@ -236,22 +281,42 @@ function DashboardLayout() {
 
       {/* Sidebar */}
       <aside
-        className={`app-sidebar ${
-          mobileMenuOpen ? "sidebar-open" : ""
-        }`}
+        className={`app-sidebar ${mobileMenuOpen ? "sidebar-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
       >
         <div className="sidebar-brand">
           <div className="sidebar-brand-mark">AX</div>
 
           <div className="sidebar-brand-text">
             <strong>AttendX</strong>
-            <span>Smart Attendance</span>
+            <span>{role === "college_admin" || role === "admin" ? "College Administration" : "Smart Attendance"}</span>
           </div>
+          {(role === "college_admin" || role === "admin") && (
+            <button
+              type="button"
+              className="sidebar-collapse-button"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-pressed={sidebarCollapsed}
+              onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+            </button>
+          )}
         </div>
 
         <div className="workspace-label">
           WORKSPACE
         </div>
+
+        {(role === "admin" || role === "college_admin") && (
+          <div className="sidebar-admin-profile" aria-label="College administrator profile">
+            <div className="sidebar-admin-avatar" aria-hidden="true">{firstLetter}</div>
+            <div className="sidebar-admin-copy">
+              <strong>{user.name || "Administrator"}</strong>
+              <span>{role === "college_admin" ? "College Administrator" : "Administrator"}</span>
+            </div>
+          </div>
+        )}
 
         <nav
           className="sidebar-nav"
@@ -261,6 +326,7 @@ function DashboardLayout() {
             <NavLink
               key={item.path}
               to={item.path}
+              title={sidebarCollapsed ? item.label : undefined}
               end={
                 item.path === "/" ||
                 item.label === "Overview" ||
@@ -273,14 +339,8 @@ function DashboardLayout() {
                 }`
               }
             >
-              <span
-                className="nav-icon"
-                aria-hidden="true"
-              >
-                {item.icon}
-              </span>
-
-              <span>{item.label}</span>
+              <span className="nav-icon" aria-hidden="true">{NAV_ICONS[item.label] || <LayoutDashboard size={18} />}</span>
+              <span className="sidebar-nav-label">{item.label}</span>
             </NavLink>
           ))}
         </nav>
@@ -345,14 +405,32 @@ function DashboardLayout() {
           </div>
 
           <div className="header-right">
+            {collegeMemberships.length > 0 && (
+              <label className="college-selector">
+                <span>College</span>
+                <select
+                  aria-label="Select College"
+                  value={activeCollegeId || ""}
+                  onChange={(event) => selectCollege(event.target.value)}
+                >
+                  {collegeMemberships.length > 1 && <option value="">Choose a College</option>}
+                  {collegeMemberships.map((membership) => (
+                    <option key={membership.college_id} value={String(membership.college_id)}>
+                      {membership.college_name} ({membership.membership_role.replaceAll("_", " ")})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
               className="notification-button"
-              aria-label="Notifications"
-              title="Notifications"
-              onClick={() => navigate(`/${role}/notifications`)}
+              aria-label={unreadNotifications == null ? "Open notifications inbox" : `Open notifications inbox, ${unreadNotifications} unread`}
+              title="Open notifications inbox"
+              onClick={() => navigate(role === "admin" || role === "college_admin" ? "/admin/notifications" : `/${role}/notifications`)}
             >
               <Bell size={17} />
+              {unreadNotifications > 0 && <span className="notification-unread-badge" aria-hidden="true">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span>}
             </button>
 
             <div className="header-divider" />
@@ -375,8 +453,31 @@ function DashboardLayout() {
           </div>
         </header>
 
-        <section className="app-content">
-          <Outlet />
+        <section className="app-content" key={tenantViewKey(activeCollegeId)}>
+          {membershipsLoading ? (
+            <div className="loading-card" role="status">Checking your College memberships…</div>
+          ) : membershipsError ? (
+            <div className="academic-alert" role="alert">
+              {membershipsError.message}
+              {membershipsError.status === 401 && (
+                <button type="button" onClick={handleLogout}>Sign in again</button>
+              )}
+              <button type="button" onClick={reloadMemberships} disabled={membershipsLoading}>
+                {membershipsLoading ? "Checking memberships…" : "Retry membership check"}
+              </button>
+            </div>
+          ) : collegeMemberships.length === 0 ? (
+            <div className="academic-alert" role="status">
+              No active College membership is linked to this account. Contact your College administrator or Super Admin if you expected workspace access.
+              <button type="button" onClick={reloadMemberships} disabled={membershipsLoading}>Check again</button>
+            </div>
+          ) : !activeCollegeId ? (
+            <div className="academic-alert" role="status">
+              Select a College from the workspace header to continue.
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </section>
       </main>
     </div>

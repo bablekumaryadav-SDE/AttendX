@@ -71,6 +71,10 @@ def get_teacher_dashboard(
                 subject_name=subject.name,
                 class_id=class_obj.id,
                 class_name=class_obj.name,
+                location_name=class_obj.location_name,
+                latitude=class_obj.latitude,
+                longitude=class_obj.longitude,
+                radius_m=class_obj.radius_m,
             )
         )
 

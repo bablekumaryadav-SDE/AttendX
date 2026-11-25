@@ -5,14 +5,14 @@ import React, {
 } from "react";
 import {
   getAttendanceSessions,
-} from "../../services/attendance";
+} from "../../../services/attendance";
 import {
   getAnalyticsOverview,
   getLowAttendance,
-} from "../../services/dashboard";
+} from "../../../services/dashboard";
 import "./Reports.css";
 
-import { getApiErrorMessage } from "../../utils/errors.js";
+import { getApiErrorMessage } from "../../../utils/errors.js";
 function csvDownload(rows) {
   if (!rows.length) return;
 

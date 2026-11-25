@@ -1,0 +1,24 @@
+﻿You are modifying my existing AttendX project on Windows.
+Root: C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX
+Backend: FastAPI + SQLAlchemy + PostgreSQL.
+Frontend: existing React application.
+
+TASK: Implement complete student face registration and face detection integrated into the existing Admin Students page.
+
+Requirements:
+1. Inspect existing files, routes, schemas, authentication, database models and frontend services before editing. Preserve existing functionality and styling.
+2. Add a separate "Face Registration" action for every student in the Admin Students page. Show face status: Not Registered, Registered, or Error. Allow re-registering/updating the face photo.
+3. Add a camera modal using browser getUserMedia. Show live preview, camera permission/loading/errors, Capture, Retake and Save buttons. Stop camera tracks when modal closes.
+4. Detect that a face is present in the captured image before saving. Reject blank/no-face images and images containing multiple faces. Use a reliable face detector compatible with the project's Python version and Windows. Do not claim face detection is working unless implemented and tested.
+5. Keep existing POST /students/{student_id}/face compatible. Validate image format and size. Save the image and status through SQLAlchemy. Generate/store a real face embedding using the chosen recognition library; never leave embedding_json=None after successful registration.
+6. Add or update backend recognition logic to compare a live/captured face against registered embeddings using a documented similarity threshold. Do not mark attendance solely because an image was uploaded.
+7. Update the student response/schema so face_registered reflects the persisted registration. Refresh the Students list/status after successful registration.
+8. Handle inactive students explicitly: explain that they must be activated before face registration, consistent with existing business rules.
+9. Never delete student records or attendance history. Do not drop or recreate tables. Provide a safe migration if needed.
+10. Add clear API and frontend errors for missing camera, permission denied, no face, multiple faces, duplicate registration, and server failures.
+11. Inspect existing attendance endpoints and integrate recognition with them rather than inventing conflicting routes.
+12. Add tests for invalid images, no face, successful registration, and status refresh. Run available tests and report exact results.
+13. Do not hardcode credentials, do not weaken authentication, and do not automatically mark attendance during registration.
+14. Modify the actual source files, not just output example code. At the end, list every changed file and exact commands to install dependencies, migrate safely, start backend/frontend, and test camera registration.
+
+First inspect the repository and then implement the feature end-to-end. If a library is incompatible with the current Python version, choose a compatible alternative rather than breaking the virtual environment.

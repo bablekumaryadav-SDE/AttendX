@@ -1,0 +1,28 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261027162514
+Username: LAPTOP-G6VAKMU3\Asus
+RunAs User: LAPTOP-G6VAKMU3\Asus
+Configuration Name: 
+Machine: LAPTOP-G6VAKMU3 (Microsoft Windows NT 10.0.26300.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -noexit -command try { . "c:\Users\Asus\AppData\Local\Programs\Microsoft VS Code\e646868227\resources\app\out\vs\workbench\contrib\terminal\common\scripts\shellIntegration.ps1" } catch {}
+Process ID: 21344
+PSVersion: 5.1.26100.9549
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9549
+BuildVersion: 10.0.26100.9549
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\face_implementation_20261027_162514.log
+
+
+[FAILED] Patch/tests failed with exit code 1
+Backup preserved: C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\backup_face_implementation_20261027_162514
+Log: C:\Users\Asus\OneDrive\Desktop\MainProject\AttendX\face_implementation_20261027_162514.log
+**********************
+Windows PowerShell transcript end
+End time: 20261027162514
+**********************

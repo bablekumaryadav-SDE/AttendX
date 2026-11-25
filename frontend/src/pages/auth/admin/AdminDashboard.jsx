@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getStudents } from "../../../services/students";
+import { getTenantStudents } from "../../../services/tenantStudents";
 import { getTeachers } from "../../../services/teachers";
 import { getAttendanceSessions } from "../../../services/attendance";
 import {
@@ -11,12 +11,15 @@ import {
 import "./AdminDashboard.css";
 
 import { getApiErrorMessage } from "../../../utils/errors.js";
+import { useAuth } from "../../../context/AuthContext";
 const number = (value) => Number(value || 0);
 
 const errorText = (error, fallback) => getApiErrorMessage(error, fallback);
 
 export default function AdminDashboard() {
+  const { activeCollegeId } = useAuth();
   const [students, setStudents] = useState([]);
+  const [studentSummary, setStudentSummary] = useState({ active: 0, total: 0 });
   const [teachers, setTeachers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [overview, setOverview] = useState(null);
@@ -24,14 +27,13 @@ export default function AdminDashboard() {
   const [lowAttendance, setLowAttendance] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
 
     const results = await Promise.allSettled([
-      getStudents(),
-      getTeachers(),
+      activeCollegeId ? getTenantStudents(activeCollegeId) : Promise.resolve([]),
+      activeCollegeId ? getTeachers(activeCollegeId) : Promise.resolve([]),
       getAttendanceSessions(),
       getAdminDashboard(),
       getAnalyticsOverview(),
@@ -49,8 +51,12 @@ export default function AdminDashboard() {
 
     if (studentResult.status === "fulfilled") {
       setStudents(
-        Array.isArray(studentResult.value) ? studentResult.value : []
+        Array.isArray(studentResult.value?.items) ? studentResult.value.items : []
       );
+      setStudentSummary({
+        active: Number(studentResult.value?.active_count || 0),
+        total: Number(studentResult.value?.total || 0),
+      });
     }
 
     if (teacherResult.status === "fulfilled") {
@@ -91,17 +97,13 @@ export default function AdminDashboard() {
     }
 
     setLoading(false);
-  }, []);
+  }, [activeCollegeId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const activeStudents = useMemo(
-    () =>
-      students.filter((item) => item.is_active !== false).length,
-    [students]
-  );
+  const activeStudents = studentSummary.active;
 
   const activeTeachers = useMemo(
     () =>
@@ -146,7 +148,7 @@ export default function AdminDashboard() {
 
           <strong>
             {number(
-              overview?.active_students || activeStudents
+              overview?.active_students ?? activeStudents
             )}
           </strong>
 
@@ -219,7 +221,7 @@ export default function AdminDashboard() {
             </Link>
 
             <Link to="/admin/subjects">
-              Subjects & assignments <b>→</b>
+              Subjects & class mappings <b>→</b>
             </Link>
 
             <Link to="/admin/attendance">

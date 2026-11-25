@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,6 +29,7 @@ import { useAuth } from "../../context/AuthContext";
 
 import {
   getActiveStudentSessions,
+  getMyStudentAcademics,
   getMyFaceStatus,
   getMyAttendance,
   submitStudentFaceAttendance,
@@ -35,7 +37,11 @@ import {
 } from "../../services/attendance";
 
 import "./StudentDashboard.css";
-import { getApiErrorMessage } from "../../utils/errors";
+import { getApiErrorMessage, uniqueApiErrorMessages } from "../../utils/errors";
+import { acquireCameraStreamSafely } from "../../utils/cameraLifecycle";
+import { stopCameraStream } from "../../utils/cameraAccess";
+import { getFreshAttendanceLocation } from "../../utils/attendanceLocation";
+import { getTenantCollegeProfile } from "../../services/tenant";
 
 function toList(value, keys = []) {
   if (Array.isArray(value)) return value;
@@ -50,7 +56,16 @@ function toList(value, keys = []) {
 }
 
 function getErrorMessage(error, fallback) {
+  if (!error?.response && (error?.code === "ERR_NETWORK" || error?.message === "Network Error")) {
+    return "AttendX could not reach the backend. Check the connection and retry.";
+  }
   return getApiErrorMessage(error, fallback);
+}
+
+function isStudentProfileLinkRequired(error) {
+  return Number(error?.response?.status) === 403
+    && String(error?.response?.data?.detail || "").trim()
+      === "An active, verified Student profile link is required in this College.";
 }
 
 function formatDate(value) {
@@ -92,12 +107,19 @@ function statusName(value) {
 }
 
 export default function StudentDashboard() {
-  const { user } = useAuth();
+  const { user, activeCollegeId } = useAuth();
+  const authenticatedUserId = user?.user_id ?? user?.id;
 
   const [records, setRecords] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [academics, setAcademics] = useState(null);
   const [faceStatus, setFaceStatus] = useState(null);
+  const [faceProfileLinkRequired, setFaceProfileLinkRequired] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [attendanceHistoryStatus, setAttendanceHistoryStatus] = useState("loading");
+  const [sessionsStatus, setSessionsStatus] = useState("loading");
+  const [faceStatusLoadState, setFaceStatusLoadState] = useState("loading");
+  const [academicsStatus, setAcademicsStatus] = useState("loading");
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -112,66 +134,189 @@ export default function StudentDashboard() {
   const cameraStreamRef = useRef(null);
   const scanTimerRef = useRef(null);
   const scanBusyRef = useRef(false);
-  const dashboardLoadRef = useRef(false);
+  const attendanceSubmissionRef = useRef(false);
+  const dashboardRequestRef = useRef(0);
+  const inFlightDashboardRef = useRef(null);
+  const authorizationBlockedScopeRef = useRef(null);
+  const dashboardScopeRef = useRef(null);
+  const cameraRequestVersionRef = useRef(0);
+  const mountedRef = useRef(false);
+  const lastAutoRefreshAtRef = useRef(0);
 
-  const selectedAttendanceSession = sessions.find(
+  useLayoutEffect(() => {
+    const scope = `${authenticatedUserId ?? ""}:${activeCollegeId ?? ""}`;
+    if (dashboardScopeRef.current === scope) return;
+    dashboardScopeRef.current = scope;
+    dashboardRequestRef.current += 1;
+    inFlightDashboardRef.current = null;
+    authorizationBlockedScopeRef.current = null;
+    setRecords([]);
+    setSessions([]);
+    setAcademics(null);
+    setFaceStatus(null);
+    setFaceProfileLinkRequired(false);
+    setSelectedAttendanceSessionId("");
+    setAttendanceHistoryStatus(activeCollegeId ? "loading" : "idle");
+    setSessionsStatus(activeCollegeId ? "loading" : "idle");
+    setFaceStatusLoadState(activeCollegeId ? "loading" : "idle");
+    setAcademicsStatus(activeCollegeId ? "loading" : "idle");
+    setError("");
+  }, [authenticatedUserId, activeCollegeId]);
+
+  const selectedAttendanceSession = sessionsStatus === "ready" ? sessions.find(
     (session) => String(session.id) === String(selectedAttendanceSessionId)
-  ) || null;
-  const noEligibleSessionMessage = error.toLowerCase().includes("no active class enrollment")
+  ) || null : null;
+  const noEligibleSessionMessage = sessionsStatus === "error"
+    ? "Active sessions are unavailable. Refresh to retry."
+    : error.toLowerCase().includes("no active class enrollment")
     ? "A class assignment is required before eligible sessions can be shown."
     : "Waiting for your teacher to start attendance.";
 
-  const loadDashboard = useCallback(async (silent = false) => {
-    if (dashboardLoadRef.current) return;
-    dashboardLoadRef.current = true;
-
+  const loadDashboard = useCallback(async (silent = false, explicitAuthorizationRetry = false) => {
+    const requestId = ++dashboardRequestRef.current;
+    const requestCollegeId = activeCollegeId;
+    const requestUserId = authenticatedUserId;
+    const requestScope = `${requestUserId ?? ""}:${activeCollegeId ?? ""}`;
+    if (authorizationBlockedScopeRef.current === requestScope && !explicitAuthorizationRetry) return;
+    if (explicitAuthorizationRetry && authorizationBlockedScopeRef.current === requestScope) {
+      authorizationBlockedScopeRef.current = null;
+    }
+    if (dashboardScopeRef.current !== requestScope) {
+      dashboardScopeRef.current = requestScope;
+      setRecords([]);
+      setSessions([]);
+      setAcademics(null);
+      setFaceStatus(null);
+      setFaceProfileLinkRequired(false);
+      setSelectedAttendanceSessionId("");
+      setAttendanceHistoryStatus(activeCollegeId ? "loading" : "idle");
+      setSessionsStatus(activeCollegeId ? "loading" : "idle");
+      setFaceStatusLoadState(activeCollegeId ? "loading" : "idle");
+      setAcademicsStatus(activeCollegeId ? "loading" : "idle");
+    }
+    if (!activeCollegeId) {
+      setRecords([]);
+      setSessions([]);
+      setAcademics(null);
+      setFaceStatus(null);
+      setAttendanceHistoryStatus("idle");
+      setSessionsStatus("idle");
+      setFaceStatusLoadState("idle");
+      setAcademicsStatus("idle");
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     if (silent) {
       setRefreshing(true);
     } else {
       setLoading(true);
+      setAttendanceHistoryStatus("loading");
     }
 
     setError("");
     try {
-      const [historyResult, sessionsResult, faceResult] =
-        await Promise.allSettled([
-          getMyAttendance(),
-          getActiveStudentSessions(),
-          getMyFaceStatus(),
+      const pending = inFlightDashboardRef.current?.scope === requestScope
+        ? inFlightDashboardRef.current.promise
+        : null;
+      const request = pending || Promise.allSettled([
+          getMyAttendance(activeCollegeId),
+          getActiveStudentSessions(activeCollegeId),
+          getMyFaceStatus(activeCollegeId),
+          getMyStudentAcademics(activeCollegeId),
         ]);
+      if (!pending) inFlightDashboardRef.current = { scope: requestScope, promise: request };
+      let results;
+      try {
+        results = await request;
+      } finally {
+        if (inFlightDashboardRef.current?.promise === request) inFlightDashboardRef.current = null;
+      }
+
+      if (
+        dashboardRequestRef.current !== requestId ||
+        String(requestCollegeId) !== String(activeCollegeId) ||
+        String(requestUserId ?? "") !== String(authenticatedUserId ?? "")
+      ) return;
+
+      if (results.some((result) => result.status === "rejected" && Number(result.reason?.response?.status) === 403)) {
+        authorizationBlockedScopeRef.current = requestScope;
+      }
+      setFaceProfileLinkRequired(results.some((result) =>
+        result.status === "rejected" && isStudentProfileLinkRequired(result.reason)
+      ));
+
+      const [historyResult, sessionsResult, faceResult, academicsResult] = results;
 
       if (historyResult.status === "fulfilled") {
         setRecords(toList(historyResult.value, ["records", "items", "attendance"]));
+        setAttendanceHistoryStatus("ready");
+      } else {
+        setRecords([]);
+        setAttendanceHistoryStatus("error");
       }
 
       if (sessionsResult.status === "fulfilled") {
         setSessions(toList(sessionsResult.value, ["sessions", "items", "active_sessions"]));
+        setSessionsStatus("ready");
+      } else {
+        setSessions([]);
+        setSessionsStatus("error");
       }
 
       if (faceResult.status === "fulfilled") {
         setFaceStatus(faceResult.value);
+        setFaceStatusLoadState("ready");
+      } else {
+        setFaceStatus(null);
+        setFaceStatusLoadState("error");
+      }
+      if (academicsResult.status === "fulfilled") {
+        setAcademics(academicsResult.value);
+        setAcademicsStatus("ready");
+      } else {
+        setAcademics(null);
+        setAcademicsStatus("error");
       }
 
       const errors = [];
       if (historyResult.status === "rejected") {
-        errors.push(getErrorMessage(historyResult.reason, "Attendance history could not be loaded."));
+        if (!isStudentProfileLinkRequired(historyResult.reason)) errors.push(getErrorMessage(historyResult.reason, "Attendance history could not be loaded."));
       }
       if (sessionsResult.status === "rejected") {
-        errors.push(getErrorMessage(sessionsResult.reason, "Active sessions could not be loaded."));
+        if (!isStudentProfileLinkRequired(sessionsResult.reason)) errors.push(getErrorMessage(sessionsResult.reason, "Active sessions could not be loaded."));
       }
       if (faceResult.status === "rejected") {
-        errors.push(getErrorMessage(faceResult.reason, "Face registration status could not be checked."));
+        if (!isStudentProfileLinkRequired(faceResult.reason)) errors.push(getErrorMessage(faceResult.reason, "Face registration status could not be checked."));
       }
-      if (errors.length) setError(errors.join(" "));
+      if (academicsResult.status === "rejected") {
+        if (!isStudentProfileLinkRequired(academicsResult.reason)) errors.push(getErrorMessage(academicsResult.reason, "Your class and Subject assignments could not be loaded."));
+      }
+      if (errors.length) setError(uniqueApiErrorMessages(errors));
       setLastUpdated(new Date());
     } catch (loadError) {
+      if (
+        dashboardRequestRef.current !== requestId ||
+        String(requestCollegeId) !== String(activeCollegeId) ||
+        String(requestUserId ?? "") !== String(authenticatedUserId ?? "")
+      ) return;
+      setRecords([]);
+      setSessions([]);
+      setFaceStatus(null);
+      setFaceProfileLinkRequired(false);
+      setAcademics(null);
+      setAttendanceHistoryStatus("error");
+      setSessionsStatus("error");
+      setFaceStatusLoadState("error");
+      setAcademicsStatus("error");
       setError(getErrorMessage(loadError, "Student attendance data could not be loaded."));
     } finally {
-      dashboardLoadRef.current = false;
-      setLoading(false);
-      setRefreshing(false);
+      if (dashboardRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [activeCollegeId, authenticatedUserId]);
 
   useEffect(() => {
     loadDashboard();
@@ -186,19 +331,27 @@ export default function StudentDashboard() {
   }, [sessions, selectedAttendanceSessionId]);
 
   const stopCamera = useCallback(() => {
+    cameraRequestVersionRef.current += 1;
     if (scanTimerRef.current) {
       window.clearInterval(scanTimerRef.current);
       scanTimerRef.current = null;
     }
-    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    stopCameraStream(cameraStreamRef.current);
     cameraStreamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     setCameraActive(false);
   }, []);
 
-  useEffect(() => () => {
-    if (scanTimerRef.current) window.clearInterval(scanTimerRef.current);
-    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      dashboardRequestRef.current += 1;
+      cameraRequestVersionRef.current += 1;
+      if (scanTimerRef.current) window.clearInterval(scanTimerRef.current);
+      stopCameraStream(cameraStreamRef.current);
+      cameraStreamRef.current = null;
+    };
   }, []);
 
   useEffect(() => () => {
@@ -224,18 +377,26 @@ export default function StudentDashboard() {
       setError("Camera access is unavailable. Open AttendX on HTTPS or localhost and check browser support.");
       return;
     }
+    stopCamera();
+    const requestVersion = cameraRequestVersionRef.current;
     try {
-      stopCamera();
-      cameraStreamRef.current = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: method === "qr" ? { ideal: "environment" } : { ideal: "user" },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+      const stream = await acquireCameraStreamSafely({
+        getUserMedia: (constraints) => navigator.mediaDevices.getUserMedia(constraints),
+        constraints: {
+          video: {
+            facingMode: method === "qr" ? { ideal: "environment" } : { ideal: "user" },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+          audio: false,
         },
-        audio: false,
+        isCurrent: () => mountedRef.current && cameraRequestVersionRef.current === requestVersion,
       });
+      if (!stream) return;
+      cameraStreamRef.current = stream;
       setCameraActive(true);
     } catch (cameraError) {
+      if (!mountedRef.current || cameraRequestVersionRef.current !== requestVersion) return;
       setCameraActive(false);
       setError(cameraError?.name === "NotAllowedError"
         ? "Camera permission was denied. Allow camera access and try again."
@@ -246,20 +407,18 @@ export default function StudentDashboard() {
   };
 
   const getSessionCoordinates = async (session) => {
-    if (session?.latitude == null || session?.longitude == null) return null;
-    if (!navigator.geolocation) throw new Error("Location permission is required for this attendance session.");
-    return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
-      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude }),
-      (geoError) => reject(new Error(geoError.code === 1
-        ? "Location permission was denied."
-        : "Unable to get your current location.")),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    ));
+    if (session?.latitude == null || session?.longitude == null) {
+      throw new Error("Attendance location is not configured for this session. Ask your College Admin or Teacher to configure the classroom location.");
+    }
+    const requestCollegeId = activeCollegeId;
+    const profile = await getTenantCollegeProfile(requestCollegeId);
+    return getFreshAttendanceLocation(undefined, profile.gps_accuracy_limit_m);
   };
 
   const handleScannedQr = useCallback(async (rawValue) => {
-    if (scanBusyRef.current) return;
+    if (scanBusyRef.current || attendanceSubmissionRef.current) return;
     scanBusyRef.current = true;
+    attendanceSubmissionRef.current = true;
     stopCamera();
     try {
       let token = String(rawValue || "").trim();
@@ -278,16 +437,18 @@ export default function StudentDashboard() {
         token,
         latitude: coordinates?.latitude ?? null,
         longitude: coordinates?.longitude ?? null,
-      });
+        accuracy_m: coordinates?.accuracy ?? null,
+      }, activeCollegeId);
       setNotice(result?.message || "Attendance recorded successfully.");
       setSessions((current) => current.map((item) => String(item.id) === String(session.id)
         ? { ...item, already_attended: true }
         : item));
-      await loadDashboard(true);
+      await loadDashboard(true, true);
     } catch (scanError) {
       setError(getErrorMessage(scanError, "QR attendance could not be recorded."));
     } finally {
       scanBusyRef.current = false;
+      attendanceSubmissionRef.current = false;
     }
   }, [sessions, selectedAttendanceSession, stopCamera, loadDashboard]);
 
@@ -315,7 +476,7 @@ export default function StudentDashboard() {
           inversionAttempts: "attemptBoth",
         })?.data || "";
       } catch (scanError) {
-        console.warn("QR frame decode failed:", scanError);
+        if (import.meta.env.DEV) console.warn("QR frame decode failed:", scanError);
       } finally {
         scanBusyRef.current = false;
       }
@@ -329,56 +490,90 @@ export default function StudentDashboard() {
     };
   }, [cameraActive, cameraMethod, handleScannedQr, stopCamera]);
 
-  const captureFace = async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas?.getContext("2d");
-    if (!video?.videoWidth || !canvas || !context) {
-      setError("Wait for the live camera preview before capturing your face.");
-      return;
-    }
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
-    if (!blob) {
-      setError("The camera frame could not be captured. Please retry.");
-      return;
-    }
-    setFaceCapture({
-      file: new File([blob], "attendance-face.jpg", { type: "image/jpeg" }),
-      preview: URL.createObjectURL(blob),
-    });
-    stopCamera();
-    setError("");
-    setNotice("Face captured. Verify it against the selected active session.");
-  };
-
-  const verifyFace = async () => {
-    if (!selectedAttendanceSession || !faceCapture?.file) return;
+  const submitFaceCapture = async (capture, alreadyLocked = false) => {
+    if (!capture?.file || !selectedAttendanceSession) return;
     if (selectedAttendanceSession.already_attended) {
       setError("Attendance already marked for this session.");
       return;
     }
-    setFaceSubmitting(true);
+    if (!alreadyLocked && (attendanceSubmissionRef.current || faceSubmitting)) return;
+    if (!alreadyLocked) {
+      attendanceSubmissionRef.current = true;
+      setFaceSubmitting(true);
+    }
     setError("");
     setNotice("");
     try {
-      const coordinates = await getSessionCoordinates(selectedAttendanceSession);
-      const result = await submitStudentFaceAttendance(selectedAttendanceSession.id, faceCapture.file, coordinates);
-      setNotice(result?.message || "Face recognized successfully. Your attendance has been marked.");
-      if (faceCapture.preview) URL.revokeObjectURL(faceCapture.preview);
+      const result = await submitStudentFaceAttendance(selectedAttendanceSession.id, capture.file, null, activeCollegeId);
+      setNotice(result?.message || "Face recognized successfully. Your attendance has been marked PRESENT.");
+      if (capture.preview) URL.revokeObjectURL(capture.preview);
       setFaceCapture(null);
       setSessions((current) => current.map((item) => String(item.id) === String(selectedAttendanceSession.id)
         ? { ...item, already_attended: true }
         : item));
-      await loadDashboard(true);
+      setCameraMethod(null);
+      await loadDashboard(true, true);
     } catch (faceError) {
+      if (faceError?.response?.status === 409) {
+        if (capture.preview) URL.revokeObjectURL(capture.preview);
+        setFaceCapture(null);
+        setCameraMethod(null);
+        setSessions((current) => current.map((item) => String(item.id) === String(selectedAttendanceSession.id)
+          ? { ...item, already_attended: true }
+          : item));
+        await loadDashboard(true, true);
+        setError("Attendance was already recorded for this session. Your dashboard has been refreshed.");
+        return;
+      }
       setError(getErrorMessage(faceError, "Face attendance could not be recorded."));
     } finally {
+      if (!alreadyLocked) {
+        attendanceSubmissionRef.current = false;
+        setFaceSubmitting(false);
+      }
+    }
+  };
+
+  const captureFace = async () => {
+    if (attendanceSubmissionRef.current || faceSubmitting) return;
+    if (!selectedAttendanceSession || selectedAttendanceSession.already_attended) return;
+    attendanceSubmissionRef.current = true;
+    setFaceSubmitting(true);
+    setError("");
+    setNotice("");
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas?.getContext("2d");
+      if (!video?.videoWidth || !canvas || !context) {
+        setError("Wait for the live camera preview before capturing your face.");
+        return;
+      }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (!blob) {
+        setError("The camera frame could not be captured. Please retry.");
+        return;
+      }
+      const capture = {
+        file: new File([blob], "attendance-face.jpg", { type: "image/jpeg" }),
+        preview: URL.createObjectURL(blob),
+      };
+      setFaceCapture(capture);
+      stopCamera();
+      setNotice("Face captured. Verifying your identity and attendance location…");
+      await submitFaceCapture(capture, true);
+    } catch (captureError) {
+      setError(getErrorMessage(captureError, "The camera frame could not be captured. Please retry."));
+    } finally {
+      attendanceSubmissionRef.current = false;
       setFaceSubmitting(false);
     }
   };
+
+  const verifyFace = () => submitFaceCapture(faceCapture);
 
   const closeCameraDialog = () => {
     stopCamera();
@@ -387,16 +582,20 @@ export default function StudentDashboard() {
     setFaceCapture(null);
   };
 
-  // Teacher session creation and attendance events should reach the
-  // student dashboard without requiring a manual page refresh.
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        loadDashboard(true);
-      }
-    }, 7000);
-
-    return () => window.clearInterval(timer);
+    const refreshVisibleDashboard = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAutoRefreshAtRef.current < 1000) return;
+      lastAutoRefreshAtRef.current = now;
+      loadDashboard(true);
+    };
+    window.addEventListener("focus", refreshVisibleDashboard);
+    document.addEventListener("visibilitychange", refreshVisibleDashboard);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleDashboard);
+      document.removeEventListener("visibilitychange", refreshVisibleDashboard);
+    };
   }, [loadDashboard]);
 
   const summary = useMemo(() => {
@@ -431,6 +630,20 @@ export default function StudentDashboard() {
       percentage,
     };
   }, [records]);
+
+  const hasNoAttendanceData = attendanceHistoryStatus === "ready" && summary.total === 0;
+  const attendanceHistoryUnavailable = attendanceHistoryStatus === "error";
+  const faceRegistrationUnavailable = faceStatusLoadState !== "ready" || faceStatus?.status === "unavailable";
+  const faceRegistered = !faceRegistrationUnavailable && Boolean(faceStatus?.face_registered);
+  const sessionSelectorPlaceholder = sessionsStatus === "error" ? "Sessions unavailable" : sessions.length ? "Select an active session" : "No active sessions";
+  const attendanceRateDisplay = attendanceHistoryStatus === "ready" && summary.total > 0
+    ? `${summary.percentage}%`
+    : attendanceHistoryStatus === "error"
+      ? "Unavailable"
+      : "—";
+  const attendanceRateRingDisplay = attendanceHistoryStatus === "ready" && summary.total > 0
+    ? `${summary.percentage}%`
+    : "—";
 
   const subjectSummary = useMemo(() => {
     const subjects = new Map();
@@ -469,6 +682,13 @@ export default function StudentDashboard() {
       .slice(0, 5);
   }, [records]);
 
+  const enrolledSubjectCount = useMemo(() => {
+    const subjectIds = (academics?.enrollments || []).flatMap((enrollment) =>
+      (enrollment.subjects || []).map((subject) => subject.id).filter((id) => id != null)
+    );
+    return new Set(subjectIds.map(String)).size;
+  }, [academics]);
+
   const firstName =
     String(user?.name || "Student")
       .trim()
@@ -506,7 +726,7 @@ export default function StudentDashboard() {
           <button
             className="sd-quiet-button"
             type="button"
-            onClick={() => loadDashboard(true)}
+            onClick={() => loadDashboard(true, true)}
             disabled={loading || refreshing}
           >
             <RefreshCw
@@ -524,16 +744,35 @@ export default function StudentDashboard() {
             Open attendance <ArrowRight size={17} />
           </Link>
         </div>
+        <aside className="sd-standing-snapshot" aria-label="Attendance standing">
+          <span className="sd-snapshot-kicker">ATTENDANCE STANDING</span>
+          <div className="sd-standing-reading">
+            <div className="sd-standing-ring" style={{ "--sd-ring": `${summary.percentage}%` }}>
+              <strong>{attendanceRateRingDisplay}</strong>
+            </div>
+            <div>
+              <strong>
+                {loading || attendanceHistoryStatus === "loading"
+                  ? "Loading history"
+                  : hasNoAttendanceData
+                    ? "No attendance data yet"
+                    : attendanceHistoryStatus === "error"
+                      ? "Attendance history unavailable"
+                      : attendanceHistoryStatus === "idle"
+                        ? "Select an active College"
+                        : `${summary.attended} classes attended`}
+              </strong>
+              <span>{hasNoAttendanceData ? "Your attendance summary will appear after your first recorded class." : "Present + late in loaded records"}</span>
+            </div>
+          </div>
+          <Link to="/student/attendance">View attendance history <ArrowRight size={13} /></Link>
+        </aside>
       </section>
 
-      {error && (
-        <div className="sd-alert" role="status">
+      {error && !cameraMethod && (
+        <div className="sd-alert" role="alert">
           <ShieldAlert size={18} />
-
-          <span>
-            {error} Check that the backend is running
-            and your student profile is active.
-          </span>
+          <span>{error}</span>
         </div>
       )}
 
@@ -552,10 +791,16 @@ export default function StudentDashboard() {
             </span>
 
             <strong>
-              {loading ? "—" : `${summary.percentage}%`}
+              {attendanceRateDisplay}
             </strong>
 
-            <small>Present + late classes</small>
+            <small>
+              {hasNoAttendanceData
+                ? "No attendance data yet"
+                : attendanceHistoryStatus === "error"
+                  ? "Attendance history unavailable"
+                  : "Present + late classes"}
+            </small>
           </div>
 
           <div
@@ -565,7 +810,7 @@ export default function StudentDashboard() {
             }}
           >
             <span>
-              {loading ? "…" : `${summary.percentage}%`}
+              {attendanceRateRingDisplay}
             </span>
           </div>
         </article>
@@ -581,7 +826,7 @@ export default function StudentDashboard() {
             </span>
 
             <strong>
-              {loading ? "—" : summary.attended}
+              {loading ? "?" : attendanceHistoryStatus === "ready" ? summary.attended : "Unavailable"}
             </strong>
 
             <small>
@@ -601,7 +846,7 @@ export default function StudentDashboard() {
             </span>
 
             <strong>
-              {loading ? "—" : summary.absent}
+              {loading ? "?" : attendanceHistoryStatus === "ready" ? summary.absent : "Unavailable"}
             </strong>
 
             <small>Based on loaded records</small>
@@ -619,15 +864,47 @@ export default function StudentDashboard() {
             </span>
 
             <strong>
-              {loading ? "—" : sessions.length}
+              {loading ? "?" : sessionsStatus === "ready" ? sessions.length : "Unavailable"}
             </strong>
 
             <small>Available to join now</small>
           </div>
         </article>
+        <article className="sd-stat-card">
+          <span className="sd-stat-icon purple"><BookOpen size={20} /></span>
+          <div>
+            <span className="sd-stat-label">Enrolled subjects</span>
+            <strong>{loading ? "—" : academics ? enrolledSubjectCount : "Unavailable"}</strong>
+            <small>From active College enrollments</small>
+          </div>
+        </article>
+      </section>
+
+      <section className="sd-panel sd-academics" aria-label="My Classes and Subjects">
+        <div className="sd-academics-heading">
+          <div>
+            <span className="sd-panel-kicker">ACADEMIC PROFILE</span>
+            <h3>My Classes &amp; Subjects</h3>
+          </div>
+          <Link to="/student/attendance">Attendance history <ArrowRight size={14} /></Link>
+        </div>
+        {loading ? <div className="sd-academics-state" role="status">Loading your active class enrollment…</div>
+          : academicsStatus !== "ready" || !academics ? <div className="sd-academics-state" role="status">Class and Subject assignments are unavailable. Refresh to retry.</div>
+            : !academics.enrollments?.length ? <div className="sd-academics-state" role="status">No active College class enrollment is available. Ask your College Admin to assign your Class.</div>
+              : <div className="sd-academic-list">{academics.enrollments.map((enrollment) => <article className="sd-academic-card" key={enrollment.class_id}>
+                <div className="sd-academic-title">
+                  <strong>{enrollment.class_name}{enrollment.section ? ` · ${enrollment.section}` : ""}</strong>
+                  <span>{enrollment.department || "Department unavailable"}{enrollment.semester != null ? ` · Semester ${enrollment.semester}` : ""}{enrollment.academic_year ? ` · ${enrollment.academic_year}` : ""}</span>
+                  {enrollment.effective_from && <small>Enrolled {formatDate(enrollment.effective_from)}</small>}
+                </div>
+                {enrollment.subjects?.length ? <ul className="sd-subject-list">{enrollment.subjects.map((subject) => <li key={`${subject.id}-${subject.academic_year}-${subject.semester}`}>
+                  <strong>{subject.name}</strong><span>{subject.code || "Code unavailable"}{subject.department ? ` · ${subject.department}` : ""}{subject.semester != null ? ` · Semester ${subject.semester}` : ""}{subject.academic_year ? ` · ${subject.academic_year}` : ""}</span>
+                </li>)}</ul> : <p className="sd-academics-state">No active Subjects are assigned to this Class yet.</p>}
+              </article>)}</div>}
       </section>
 
       {summary.total > 0 &&
+        attendanceHistoryStatus === "ready" &&
         summary.percentage < 75 &&
         !loading && (
           <div className="sd-attendance-tip">
@@ -645,15 +922,17 @@ export default function StudentDashboard() {
         <div className="sd-face-status-copy">
           <span className="sd-panel-kicker">BIOMETRIC PROFILE</span>
           <h3>Face registration</h3>
-          <p>{faceStatus?.face_registered ? "Your registered face reference is ready for verification." : "Your face is not registered. Please register your face first."}</p>
+          <p>{faceRegistrationUnavailable ? faceProfileLinkRequired ? "Ask your College Admin to verify your existing Student profile link for this College. Use dashboard Refresh after verification." : "Face registration status could not be checked. Use dashboard Refresh to retry." : faceRegistered ? "Your registered face reference is ready for verification." : "Your face is not registered. Please register your face first."}</p>
         </div>
-        <span className={`sd-session-status ${faceStatus?.face_registered ? "done" : "open"}`}>
-          {loading ? "Checking…" : faceStatus?.status === "unavailable" ? "Unavailable" : faceStatus?.face_registered ? "Registered" : "Not registered"}
+        <span className={`sd-session-status ${faceRegistered ? "done" : "open"}`}>
+          {loading || faceStatusLoadState === "loading" ? "Checking..." : faceRegistrationUnavailable ? "Unavailable" : faceRegistered ? "Registered" : "Not registered"}
         </span>
-        {faceStatus?.face_registered ? (
+        {faceRegistered ? (
           <Link to="/student/attendance">Open attendance <ArrowRight size={14} /></Link>
-        ) : (
+        ) : faceStatusLoadState === "ready" && faceStatus?.status !== "unavailable" ? (
           <Link to="/student/attendance" state={{ method: "register-face" }}>Register My Face <ArrowRight size={14} /></Link>
+        ) : (
+          <span className="sd-empty" role="status">{faceProfileLinkRequired ? "Student profile verification required" : "Retry face status from the dashboard."}</span>
         )}
       </section>
 
@@ -673,8 +952,8 @@ export default function StudentDashboard() {
               <p>Scan the dynamic QR code displayed by your teacher.</p>
             </div>
             <select aria-label="Select session for QR attendance" value={selectedAttendanceSessionId} onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}>
-              <option value="">{sessions.length ? "Select an active session" : "No active sessions"}</option>
-              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
+              <option value="">{sessionSelectorPlaceholder}</option>
+              {sessionsStatus === "ready" && sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
             </select>
             {selectedAttendanceSession ? (
               <div className="sd-attendance-session-summary">
@@ -694,11 +973,11 @@ export default function StudentDashboard() {
             <span className="sd-attendance-method-icon face"><Camera size={22} /></span>
             <div>
               <h4>Face Recognition</h4>
-              <p>Face status: <strong>{loading ? "Checking…" : faceStatus?.status === "unavailable" ? "Unavailable" : faceStatus?.face_registered ? "Registered" : "Not Registered"}</strong></p>
+              <p>Face status: <strong>{loading || faceStatusLoadState === "loading" ? "Checking..." : faceRegistrationUnavailable ? "Unavailable" : faceRegistered ? "Registered" : "Not Registered"}</strong></p>
             </div>
             <select aria-label="Select session for face attendance" value={selectedAttendanceSessionId} onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}>
-              <option value="">{sessions.length ? "Select an active session" : "No active sessions"}</option>
-              {sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
+              <option value="">{sessionSelectorPlaceholder}</option>
+              {sessionsStatus === "ready" && sessions.map((session) => <option key={session.id} value={session.id}>{session.title || session.subject_name} · {session.class_name} · {session.teacher_name || "Teacher"}</option>)}
             </select>
             {selectedAttendanceSession ? (
               <div className="sd-attendance-session-summary">
@@ -710,18 +989,20 @@ export default function StudentDashboard() {
             ) : (
               <div className="sd-attendance-session-summary waiting">{noEligibleSessionMessage}</div>
             )}
-            {faceStatus?.face_registered ? (
+            {faceRegistered ? (
               <button type="button" onClick={() => openCamera("face")} disabled={!selectedAttendanceSession || Boolean(selectedAttendanceSession?.already_attended)}>
                 Open Face Camera <ArrowRight size={15} />
               </button>
-            ) : (
+            ) : faceStatusLoadState === "ready" && faceStatus?.status !== "unavailable" ? (
               <Link to="/student/attendance" state={{ method: "register-face" }}>
                 Register My Face <ArrowRight size={15} />
               </Link>
+            ) : (
+              <button type="button" disabled>Face status unavailable</button>
             )}
           </article>
         </div>
-        {!loading && sessions.length === 0 && !error && (
+        {!loading && sessionsStatus === "ready" && sessions.length === 0 && !error && (
           <p className="sd-no-active-attendance">No active attendance session. Please wait for your teacher to start attendance.</p>
         )}
       </section>
@@ -746,7 +1027,7 @@ export default function StudentDashboard() {
               </select>
             </label>
             {!selectedAttendanceSession && (
-              <p className="sd-no-active-attendance">No active attendance session. Please wait for your teacher to start attendance. Camera preview is available; attendance submission is disabled.</p>
+              <p className="sd-no-active-attendance">{sessionsStatus === "error" ? "Active sessions are unavailable. Refresh the dashboard to retry. Camera attendance submission is disabled." : "No active attendance session. Please wait for your teacher to start attendance. Camera preview is available; attendance submission is disabled."}</p>
             )}
             {selectedAttendanceSession?.already_attended && (
               <p className="sd-camera-inline-message">Attendance already marked for this session.</p>
@@ -766,7 +1047,7 @@ export default function StudentDashboard() {
                 cameraMethod === "qr" ? (
                   <button type="button" className="secondary" onClick={stopCamera}>Stop Scanner</button>
                 ) : (
-                  <button type="button" className="primary" onClick={captureFace}>Capture Face</button>
+                  <button type="button" className="primary" onClick={captureFace} disabled={!selectedAttendanceSession || selectedAttendanceSession.already_attended || faceSubmitting}>Capture Face &amp; Mark Attendance</button>
                 )
               ) : cameraMethod === "qr" ? (
                 <button type="button" className="primary" onClick={() => openCamera("qr")}>Open QR Scanner</button>
@@ -774,14 +1055,14 @@ export default function StudentDashboard() {
                 <>
                   <button type="button" className="secondary" onClick={() => { setFaceCapture(null); openCamera("face"); }}>Retake</button>
                   <button type="button" className="primary" onClick={verifyFace} disabled={!selectedAttendanceSession || selectedAttendanceSession.already_attended || faceSubmitting || !faceCapture?.file}>
-                    {faceSubmitting ? "Verifying face…" : "Verify Face and Mark Attendance"}
+                    {faceSubmitting ? "Verifying face…" : "Retry Face Verification"}
                   </button>
                 </>
               ) : (
                 <button type="button" className="primary" onClick={() => openCamera("face")}>Open Face Camera</button>
               )}
             </div>
-            {cameraMethod === "face" && !faceStatus?.face_registered && (
+            {cameraMethod === "face" && faceStatusLoadState === "ready" && !faceRegistered && (
               <p className="sd-camera-inline-message">Your face is not registered. Please register your face first. <Link to="/student/attendance" state={{ method: "register-face" }} onClick={closeCameraDialog}>Register My Face</Link></p>
             )}
             {!selectedAttendanceSession && <button className="sd-camera-disabled-action" type="button" disabled>{cameraMethod === "qr" ? "Mark Attendance" : "Verify Face"} — select an active session first</button>}
@@ -809,6 +1090,8 @@ export default function StudentDashboard() {
               <span className="sd-loader" />
               Loading active sessions…
             </div>
+          ) : sessionsStatus === "error" ? (
+            <div className="sd-empty" role="status">Active sessions are unavailable. Refresh to retry.</div>
           ) : sessions.length === 0 ? (
             <div className="sd-empty">
               <span className="sd-empty-icon">
@@ -922,6 +1205,8 @@ export default function StudentDashboard() {
             <div className="sd-empty">
               Calculating your attendance…
             </div>
+          ) : attendanceHistoryUnavailable ? (
+            <div className="sd-empty" role="status">Subject attendance is unavailable. Refresh to retry.</div>
           ) : subjectSummary.length === 0 ? (
             <div className="sd-empty">
               <span className="sd-empty-icon">
@@ -995,6 +1280,8 @@ export default function StudentDashboard() {
           <div className="sd-empty">
             Loading attendance history…
           </div>
+        ) : attendanceHistoryUnavailable ? (
+          <div className="sd-empty" role="status">Attendance history is unavailable. Refresh to retry.</div>
         ) : records.length === 0 ? (
           <div className="sd-empty">
             <span className="sd-empty-icon">
@@ -1051,13 +1338,13 @@ export default function StudentDashboard() {
 
                       <td>
                         {formatDate(
-                          record.verified_at || record.starts_at
+                          record.verified_at || record.date || record.starts_at
                         )}
                       </td>
 
                       <td>
                         {formatTime(
-                          record.verified_at || record.starts_at
+                          record.verified_at || record.date || record.starts_at
                         )}
                       </td>
 

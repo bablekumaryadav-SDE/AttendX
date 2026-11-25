@@ -1,0 +1,178 @@
+"""Tenant face enrollment tests using only synthetic SQLite fixtures."""
+
+import asyncio
+import hashlib
+import unittest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+try:
+    import httpx2 as httpx
+except ImportError:  # Compatibility with environments before Starlette's httpx2 transition.
+    import httpx
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base, get_db
+from app.dependencies import get_current_user
+from app.main import app
+from app.models import (
+    AttendanceEvent, AttendanceSession, Class, College, CollegeMembership,
+    FaceEmbedding, Student, StudentClassAssignment, Subject, Teacher,
+    TeacherAssignment, User,
+)
+
+
+class _SyncASGIClient:
+    """Small synchronous facade for installed httpx ASGITransport."""
+
+    def __init__(self, application):
+        self.application = application
+
+    def _request(self, method, path, **kwargs):
+        async def send():
+            transport = httpx.ASGITransport(app=self.application)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                return await client.request(method, path, **kwargs)
+        return asyncio.run(send())
+
+    def get(self, path, **kwargs):
+        return self._request("GET", path, **kwargs)
+
+    def post(self, path, **kwargs):
+        return self._request("POST", path, **kwargs)
+
+    def close(self):
+        return None
+
+
+class TenantFaceApiTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        with self.Session.begin() as db:
+            db.add_all([
+                College(id=81, slug="face-a", official_name="Face College A", status="active"),
+                College(id=82, slug="face-b", official_name="Face College B", status="active"),
+                User(id=810, name="Admin A", email="admin-a@test.invalid", hashed_password="x", role="admin"),
+                User(id=811, name="Student A", email="student-a@test.invalid", hashed_password="x", role="student"),
+                User(id=812, name="Admin B", email="admin-b@test.invalid", hashed_password="x", role="admin"),
+                User(id=813, name="Teacher A", email="teacher-a@test.invalid", hashed_password="x", role="teacher"),
+                Student(id=8110, college_id=81, name="Student A", email="student-a@test.invalid", roll_number="A1", is_active=True),
+                Student(id=8210, college_id=82, name="Student B", email="student-b@test.invalid", roll_number="B1", is_active=True),
+                Teacher(id=8130, college_id=81, name="Teacher A", email="teacher-a@test.invalid", employee_id="TA1", is_active=True),
+                Class(id=8111, college_id=81, name="Class A", section="A", is_active=True),
+                Subject(id=8112, college_id=81, name="Subject A", code="SA", is_active=True),
+            ])
+            db.add_all([
+                CollegeMembership(user_id=810, college_id=81, role="college_admin", status="active"),
+                CollegeMembership(user_id=811, college_id=81, role="student", status="active"),
+                CollegeMembership(user_id=812, college_id=82, role="college_admin", status="active"),
+                CollegeMembership(user_id=813, college_id=81, role="teacher", status="active"),
+                StudentClassAssignment(id=8113, college_id=81, student_id=8110, class_id=8111, academic_year="2026-27", semester=1, is_active=True),
+                TeacherAssignment(id=8114, college_id=81, teacher_id=8130, subject_id=8112, class_id=8111, academic_year="2026-27", semester=1, is_active=True),
+                AttendanceSession(
+                    id=8115, college_id=81, teacher_id=8130, subject_id=8112, class_id=8111,
+                    title="Face session", starts_at=datetime.now(timezone.utc)-timedelta(minutes=5),
+                    ends_at=datetime.now(timezone.utc)+timedelta(minutes=20), status="active",
+                    qr_secret="synthetic-session-secret", qr_expires_at=datetime.now(timezone.utc)+timedelta(minutes=1),
+                    radius_m=100,
+                ),
+            ])
+        self.actor = {"id": 810, "sub": "810", "email": "admin-a@test.invalid", "role": "admin", "is_active": True}
+
+        def override_db():
+            with self.Session() as db:
+                yield db
+
+        app.dependency_overrides.clear()
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[get_current_user] = lambda: self.actor
+        self.client = _SyncASGIClient(app)
+
+    def tearDown(self):
+        self.client.close()
+        app.dependency_overrides.clear()
+        self.engine.dispose()
+
+    def test_admin_can_register_only_same_college_student_and_response_is_sanitized(self):
+        image = b"synthetic face bytes"
+        vector = [1.0] + [0.0] * 127
+        with patch("app.api.tenant_face.embedding_from_image", return_value=vector):
+            response = self.client.post(
+                "/tenant/face/students/8110/register?college_id=81",
+                files={"file": ("capture.jpg", image, "image/jpeg")},
+                data={"consent": "true"},
+            )
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertTrue(response.json()["face_registered"])
+        self.assertNotIn("embedding", response.text)
+        self.assertNotIn("image_data", response.text)
+        with self.Session() as db:
+            saved = db.query(FaceEmbedding).one()
+            self.assertEqual(saved.student_id, 8110)
+            self.assertEqual(saved.image_data, image)
+            self.assertEqual(len(saved.embedding_json.strip("[]").split(",")), 128)
+
+    def test_foreign_college_student_is_indistinguishable_from_missing(self):
+        response = self.client.get("/tenant/face/students/8210?college_id=81")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Record not found."})
+
+    def test_student_can_only_read_and_register_own_face_with_explicit_membership(self):
+        self.actor.update(id=811, sub="811", email="student-a@test.invalid", role="student")
+        status_response = self.client.get("/tenant/face/me?college_id=81")
+        self.assertEqual(status_response.status_code, 200, status_response.text)
+        self.assertFalse(status_response.json()["face_registered"])
+        self.assertEqual(self.client.get("/tenant/face/me").status_code, 422)
+        self.assertEqual(self.client.get("/tenant/face/me?college_id=82").status_code, 403)
+
+    def test_admin_requires_explicit_consent_and_role(self):
+        image = {"file": ("capture.jpg", b"image", "image/jpeg")}
+        denied = self.client.post("/tenant/face/students/8110/register?college_id=81", files=image, data={"consent": "false"})
+        self.assertEqual(denied.status_code, 400)
+        self.actor.update(id=811, sub="811", email="student-a@test.invalid", role="student")
+        forbidden = self.client.get("/tenant/face/students/8110?college_id=81")
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_unscoped_legacy_face_and_attendance_routes_remain_default_denied(self):
+        self.assertEqual(self.client.get("/face/me/status").status_code, 503)
+        self.assertEqual(self.client.get("/attendance/student/active-sessions").status_code, 503)
+
+    def test_student_session_list_is_scoped_and_never_returns_qr_secret(self):
+        self.actor.update(id=811, sub="811", email="student-a@test.invalid", role="student")
+        response = self.client.get("/tenant/face/student/sessions?college_id=81")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([row["id"] for row in response.json()], [8115])
+        self.assertNotIn("qr_secret", response.text)
+        self.assertEqual(self.client.get("/tenant/face/student/sessions?college_id=82").status_code, 403)
+
+    def test_face_attendance_requires_registered_matching_embedding_and_prevents_duplicates(self):
+        self.actor.update(id=811, sub="811", email="student-a@test.invalid", role="student")
+        probe = [1.0] + [0.0] * 127
+        image = b"synthetic registered biometric bytes"
+        with self.Session.begin() as db:
+            db.add(FaceEmbedding(
+                student_id=8110, image_data=image, mime_type="image/jpeg",
+                image_sha256=hashlib.sha256(image).hexdigest(),
+                embedding_json=__import__("json").dumps(probe), status="registered",
+            ))
+        with patch("app.api.tenant_face.embedding_from_image", return_value=probe):
+            first = self.client.post(
+                "/tenant/face/student/sessions/8115/face?college_id=81",
+                files={"file": ("capture.jpg", b"synthetic live capture", "image/jpeg")},
+            )
+            duplicate = self.client.post(
+                "/tenant/face/student/sessions/8115/face?college_id=81",
+                files={"file": ("capture.jpg", b"synthetic live capture", "image/jpeg")},
+            )
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.json()["status"], "present")
+        self.assertEqual(duplicate.status_code, 409)
+        with self.Session() as db:
+            self.assertEqual(db.query(AttendanceEvent).filter_by(session_id=8115, student_id=8110).count(), 1)
+
+if __name__ == "__main__":
+    unittest.main()

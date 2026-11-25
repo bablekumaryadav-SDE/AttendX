@@ -1,15 +1,19 @@
-import api from "./api";
+import api from "./api.js";
 
-export async function getMyFaceStatus() {
-  const response = await api.get("/face/me/status");
+export async function getMyFaceStatus(collegeId) {
+  if (!collegeId) throw new Error("Select an active College before checking face registration.");
+  const response = await api.get("/tenant/face/me", { params: { college_id: collegeId } });
   return response.data;
 }
 
-export async function registerMyFace(file) {
+export async function registerMyFace(file, collegeId, consent) {
   if (!file) throw new Error("Capture a face image before registration.");
+  if (!collegeId) throw new Error("Select an active College before registering your face.");
   const formData = new FormData();
   formData.append("file", file, file.name || "my-face.jpg");
-  const response = await api.post("/face/me/register", formData, {
+  formData.append("consent", consent ? "true" : "false");
+  const response = await api.post("/tenant/face/me/register", formData, {
+    params: { college_id: collegeId },
     headers: { "Content-Type": "multipart/form-data" },
     timeout: 30000,
   });
@@ -105,34 +109,47 @@ export async function markManualAttendance(
 // Student attendance
 // ============================================================
 
-export async function getActiveStudentSessions() {
-  const response = await api.get(
-    "/attendance/student/active-sessions"
-  );
+export async function getActiveStudentSessions(collegeId) {
+  if (!collegeId) throw new Error("Select an active College before loading attendance sessions.");
+  const response = await api.get("/tenant/face/student/sessions", { params: { college_id: collegeId } });
 
+  return response.data;
+}
+
+export async function getMyStudentAcademics(collegeId) {
+  if (!collegeId) throw new Error("Select an active College before loading class assignments.");
+  const response = await api.get("/tenant/face/student/academics", { params: { college_id: collegeId } });
+  return response.data;
+}
+
+export async function getMyStudentProfile(collegeId) {
+  if (!collegeId) throw new Error("Select an active College before loading your profile.");
+  const response = await api.get("/tenant/face/student/profile", { params: { college_id: collegeId } });
   return response.data;
 }
 
 
 export async function submitStudentQrAttendance(
   sessionId,
-  payload
+  payload,
+  collegeId
 ) {
-  const response = await api.post(
-    `/attendance/student/sessions/${sessionId}/qr`,
-    payload
-  );
+  if (!collegeId) throw new Error("Select an active College before submitting attendance.");
+  const response = await api.post(`/tenant/face/student/sessions/${sessionId}/qr`, payload, { params: { college_id: collegeId } });
 
   return response.data;
 }
 
-export async function submitStudentFaceAttendance(sessionId, file, coordinates = null) {
+export async function submitStudentFaceAttendance(sessionId, file, coordinates = null, collegeId) {
   if (!sessionId || !file) throw new Error("An active session and face capture are required.");
+  if (!collegeId) throw new Error("Select an active College before submitting attendance.");
   const formData = new FormData();
   formData.append("file", file, file.name || "attendance-face.jpg");
   if (coordinates?.latitude != null) formData.append("latitude", String(coordinates.latitude));
   if (coordinates?.longitude != null) formData.append("longitude", String(coordinates.longitude));
-  const response = await api.post(`/attendance/student/sessions/${sessionId}/face`, formData, {
+  if (coordinates?.accuracy != null) formData.append("accuracy_m", String(coordinates.accuracy));
+  const response = await api.post(`/tenant/face/student/sessions/${sessionId}/face`, formData, {
+    params: { college_id: collegeId },
     headers: { "Content-Type": "multipart/form-data" },
     timeout: 30000,
   });
@@ -153,10 +170,9 @@ export async function verifySessionQr(
 }
 
 
-export async function getMyAttendance() {
-  const response = await api.get(
-    "/attendance/student/me"
-  );
+export async function getMyAttendance(collegeId) {
+  if (!collegeId) throw new Error("Select an active College before loading attendance history.");
+  const response = await api.get("/tenant/face/student/attendance", { params: { college_id: collegeId } });
 
   return response.data;
 }

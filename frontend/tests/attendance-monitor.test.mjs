@@ -20,7 +20,10 @@ test("API client honors the configured VITE_API_URL and monitor API paths", asyn
     readFile(attendancePath, "utf8"),
   ]);
 
-  assert.match(apiSource, /VITE_API_BASE_URL\s*\|\|\s*import\.meta\.env\.VITE_API_URL/);
+  assert.match(apiSource, /const API_ENV = import\.meta\.env \|\| \{\}/);
+  assert.match(apiSource, /if\s*\(import\.meta\.env\?\.DEV !== false\)/);
+  assert.match(apiSource, /resolveApiBaseUrl\(\{ \.\.\.API_ENV, DEV: false \}\)/);
+  assert.match(apiSource, /from "\.\/apiBaseUrl\.js"/);
   assert.match(attendanceSource, /"\/attendance\/sessions"/);
   assert.match(attendanceSource, /`\/attendance\/sessions\/\$\{sessionId\}\/live`/);
 });
