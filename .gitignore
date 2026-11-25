@@ -24,3 +24,25 @@ face-integration-backup/
 # Local accidental files
 s -ExecutionPolicy*
 subject_assignment_diagnostic.txt
+
+# Local environments and generated dependencies
+.venv/
+venv/
+**/.venv/
+**/venv/
+node_modules/
+**/node_modules/
+__pycache__/
+*.py[cod]
+
+# Backup files and folders
+backup*/
+**/backup*/
+backups/
+**/backups/
+*.backup_*
+
+# Local secrets
+.env
+.env.*
+!.env.example
